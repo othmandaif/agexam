@@ -1,0 +1,30 @@
+# dépendances
+/node_modules
+/.pnp
+.pnp.*
+
+# build
+/.next/
+/out/
+/build
+*.tsbuildinfo
+next-env.d.ts
+
+# tests
+/coverage
+/test-results
+/playwright-report
+
+# env
+.env
+.env*.local
+
+# divers
+.DS_Store
+*.pem
+npm-debug.log*
+.vercel
+.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json

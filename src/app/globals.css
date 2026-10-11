@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+/*
+ * Design system AGExam — « Modern SaaS EdTech / Clean Professional ».
+ * Navy (menu) + bleu AGExam (actions) + blanc + gris doux.
+ * Les noms de jetons sont partagés par toute l'application : changer une valeur ici
+ * met à jour tous les écrans.
+ */
+@theme {
+  /* Surfaces */
+  --color-canvas: #f6f8fc;
+  --color-surface: #ffffff;
+  --color-lilac: #e9edff;
+  --color-code: #1b2440;
+  --color-navy: #0d2148;
+  --color-navy-soft: #16305f;
+
+  /* Texte */
+  --color-ink: #172554;
+  --color-ink-soft: #1e2b5c;
+  --color-muted: #64748b;
+  --color-faint: #94a3b8;
+
+  /* Lignes */
+  --color-line: #e5eaf2;
+  --color-line-soft: #eef2f7;
+
+  /* Marque */
+  --color-primary: #315bef;
+  --color-primary-strong: #2447c7;
+  --color-primary-wash: #f4f6ff;
+  /* « mint » = action principale de l'écran : désormais le bleu AGExam. */
+  --color-mint: #315bef;
+  --color-mint-ink: #ffffff;
+  --color-mint-strong: #18b981;
+
+  /* États (fond / texte / remplissage) */
+  --color-success-bg: #e9fbf4;
+  --color-success: #0b8a5e;
+  --color-warning-bg: #fff7e6;
+  --color-warning: #b45309;
+  --color-warning-fill: #f59e0b;
+  --color-danger-bg: #fef0f0;
+  --color-danger: #c62828;
+  --color-danger-fill: #ef4444;
+  --color-neutral-bg: #f1f4f9;
+  --color-neutral: #475569;
+  --color-info-bg: #eff6ff;
+  --color-info: #2563eb;
+  --color-violet-bg: #f3efff;
+  --color-violet: #7c3aed;
+  --color-orange-bg: #fff4ea;
+  --color-orange: #ea6a0a;
+
+  /* Typographie */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  /* Formes */
+  --radius-field: 10px;
+  --radius-card: 16px;
+  --radius-panel: 20px;
+
+  /* Ombres (très discrètes) */
+  --shadow-soft: 0 2px 12px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 8px 30px rgba(15, 23, 42, 0.06);
+  --shadow-pop: 0 24px 60px rgba(15, 23, 42, 0.18);
+}
+
+/* Bandeau doux (accueil étudiant, connexion) */
+@utility bg-hero {
+  background-image: linear-gradient(135deg, #eef2ff 0%, #f6f8fc 55%, #eaf1ff 100%);
+}
+
+/* Carte d'action principale : dégradé bleu très léger */
+@utility bg-cta {
+  background-image: linear-gradient(135deg, #3d66f5 0%, #2447c7 100%);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-[15px] text-ink;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.01em;
+  }
+
+  ::placeholder {
+    color: var(--color-faint);
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .animate-fade-in {
+    animation: fade-in 180ms ease-out;
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+/* Mouvements réduits : animations et transitions quasi instantanées. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Micro-interactions communes : lignes de tableau, liens, champs (150–200 ms). */
+@layer base {
+  tbody tr {
+    transition: background-color 150ms ease-out;
+  }
+  a,
+  summary {
+    transition-property: color, background-color, border-color, box-shadow;
+    transition-duration: 150ms;
+    transition-timing-function: ease-out;
+  }
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+    outline-offset: 2px;
+  }
+}
