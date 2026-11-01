@@ -1,6 +1,8 @@
 "use client";
 
-import { AlertTriangle, ListChecks } from "lucide-react";
+import { AlertTriangle, Code2, ListChecks } from "lucide-react";
+import Link from "next/link";
+import { paths } from "@/lib/routes";
 import { useState } from "react";
 import type { ExamResults } from "../types";
 import { QuestionAnalysisCard } from "./question-analysis";
@@ -41,6 +43,35 @@ export function ResultsView({
           {summary.inProgress > 1 ? "s" : ""} en cours. Les chiffres bougeront à chaque copie
           rendue.
         </p>
+      ) : null}
+
+      {summary.algoToReview.length > 0 ? (
+        <section className="flex flex-col gap-2.5 rounded-card border border-warning/30 bg-warning-bg px-5 py-4">
+          <p className="flex items-center gap-2 text-[15px] font-bold text-ink">
+            <Code2 className="size-5 text-warning" aria-hidden />
+            {summary.algoToReview.length} copie{summary.algoToReview.length > 1 ? "s" : ""} avec un
+            algorithme à valider
+          </p>
+          <p className="text-sm text-ink-soft">
+            Tant qu&apos;elle n&apos;est pas validée, la note de la réponse compte 0 dans la note
+            sur 20. Ouvrez la copie : vous y verrez le code rendu, la note proposée avec
+            l&apos;explication de chaque critère, et les boutons « Valider la note proposée » ou «
+            Modifier la note ».
+          </p>
+          <ul className="flex flex-wrap gap-2">
+            {summary.algoToReview.map((c) => (
+              <li key={c.attemptId}>
+                <Link
+                  href={`${paths.examCopy(exam.id, c.attemptId)}#algo`}
+                  className="inline-flex items-center rounded-full border border-warning/40 bg-surface px-3 py-1 text-sm font-semibold text-ink no-underline hover:border-warning"
+                >
+                  {c.fullName}
+                  {c.count > 1 ? ` (${c.count})` : ""}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {studentsTable}

@@ -14,6 +14,10 @@ export const QUESTION_TYPES = [
   "TRACE_ALGORITHME",
   "RECHERCHE_ERREUR",
   "COMPLEXITE",
+  /** Algorithme écrit par l'étudiant (AGSyntax), noté par jeux d'essai + correction automatique. */
+  "ALGORITHME",
+  /** Question directe / rédaction : réponse en texte libre, corrigée automatiquement. */
+  "REDACTION",
 ] as const;
 export type QuestionType = (typeof QUESTION_TYPES)[number];
 

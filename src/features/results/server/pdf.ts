@@ -421,7 +421,19 @@ export async function buildCopyPdf(
 
   for (const q of rows) {
     const neutralized = q.examNeutralized || q.status === "NEUTRALISEE";
-    const isBlank = q.selectedOptionIds.length === 0;
+    const isBlank = q.algo ? !q.algo.code?.trim() : q.selectedOptionIds.length === 0;
+    // Algorithme : on imprime le code de l'étudiant et la correction.
+    const codeText = q.algo ? q.algo.code?.trim() || null : q.code;
+    const g = q.algo?.grading;
+    const gradeNote = q.algo
+      ? g?.status === "done"
+        ? `Correction${g.source === "manual" ? " du formateur" : " automatique"}${
+            g.testsTotal ? ` : ${g.testsPassed}/${g.testsTotal} jeux d'essai réussis` : ""
+          }.${g.comment ? ` ${g.comment}` : ""}`
+        : isBlank
+          ? ""
+          : "Correction en cours."
+      : "";
     const state = neutralized
       ? { text: "Neutralisée", color: C.muted, bg: C.neutralBg }
       : q.status === "INVALIDEE"
@@ -430,19 +442,22 @@ export async function buildCopyPdf(
           ? { text: "Sans réponse", color: C.warning, bg: "#FEF3C7" }
           : q.isCorrect
             ? { text: "Correcte", color: C.success, bg: C.successBg }
-            : { text: "Incorrecte", color: C.danger, bg: C.dangerBg };
+            : (q.pointsAwarded ?? 0) > 0
+              ? { text: "Partielle", color: C.warning, bg: "#FEF3C7" }
+              : { text: "Incorrecte", color: C.danger, bg: C.dangerBg };
 
     const textW = width - 24;
     doc.font("bold").fontSize(9.5);
     const promptH = doc.heightOfString(`${q.number}. ${q.prompt}`, { width: textW - 130 });
     doc.font("mono").fontSize(8);
-    const codeH = q.code ? doc.heightOfString(q.code, { width: textW - 16 }) + 12 : 0;
+    const codeH = codeText ? doc.heightOfString(codeText, { width: textW - 16 }) + 12 : 0;
     doc.font("body").fontSize(9);
     const optH = q.options.reduce(
       (s, o) => s + Math.max(14, doc.heightOfString(o.label, { width: textW - 70 }) + 4),
       0,
     );
-    const blockH = 14 + promptH + 6 + codeH + optH + 8;
+    const noteH = gradeNote ? doc.heightOfString(gradeNote, { width: textW }) + 6 : 0;
+    const blockH = 14 + promptH + 6 + codeH + optH + noteH + 8;
     if (doc.y + blockH > bottomLimit(doc) && blockH < bottomLimit(doc) - doc.page.margins.top) {
       doc.addPage();
     }
@@ -478,14 +493,22 @@ export async function buildCopyPdf(
         { width: 46, align: "right" },
       );
     let y = by + 10 + promptH + 6;
-    if (q.code) {
+    if (codeText) {
       doc.roundedRect(left + 12, y, textW, codeH - 4, 4).fill(C.soft);
       doc
         .font("mono")
         .fontSize(8)
         .fillColor(C.ink)
-        .text(q.code, left + 20, y + 4, { width: textW - 16 });
+        .text(codeText, left + 20, y + 4, { width: textW - 16 });
       y += codeH;
+    }
+    if (gradeNote) {
+      doc
+        .font("body")
+        .fontSize(9)
+        .fillColor(C.muted)
+        .text(gradeNote, left + 12, y + 2, { width: textW });
+      y += noteH;
     }
     q.options.forEach((o, i) => {
       const selected = q.selectedOptionIds.includes(o.id);

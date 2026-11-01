@@ -1,9 +1,8 @@
-import { ChevronRight, Upload, UserRound, Users } from "lucide-react";
+import { ChevronRight, UserRound, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, Td, Th } from "@/components/ui/table";
@@ -11,7 +10,7 @@ import { USER_ROLES } from "@/domain/enums";
 import { CreateAccountForm } from "@/features/accounts/components/create-account-form";
 import { accountFiltersSchema, ROLE_LABELS } from "@/features/accounts/schemas";
 import { listAccounts, listGroupOptions } from "@/features/accounts/server/queries";
-import { paths, ROUTES } from "@/lib/routes";
+import { paths } from "@/lib/routes";
 import { clampPage, parsePageParams } from "@/lib/pagination";
 import { requireTenant } from "@/server/auth/session";
 import { getViewYear } from "@/server/year";
@@ -30,7 +29,7 @@ export default async function AccountsPage({
   const user = await requireTenant("ADMIN");
   const sp = await searchParams;
   const year = await getViewYear();
-  const filters = { ...accountFiltersSchema.parse(sp), year };
+  const filters = { ...accountFiltersSchema.parse(sp), year, staffOnly: true };
   let pg = parsePageParams({ page: String(sp.page ?? ""), taille: String(sp.taille ?? "") });
   const [first, groupOptions] = await Promise.all([
     listAccounts(user.establishmentId, filters, { offset: pg.offset, limit: pg.size }),
@@ -51,12 +50,7 @@ export default async function AccountsPage({
       <PageHeader
         icon={<Users aria-hidden />}
         title="Comptes"
-        description="Administrateurs, formateurs et étudiants de l'établissement."
-        actions={
-          <Link href={ROUTES.admin.import} className={buttonVariants({ variant: "outline" })}>
-            <Upload aria-hidden /> Importer des étudiants
-          </Link>
-        }
+        description="Comptes des formateurs et des administrateurs. Les groupes et les étudiants sont gérés par chaque formateur."
       />
 
       <div className="flex flex-wrap items-start gap-6">
@@ -67,7 +61,10 @@ export default async function AccountsPage({
               param="role"
               label="Filtrer par rôle"
               allLabel="Tous les rôles"
-              options={USER_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] }))}
+              options={USER_ROLES.filter((r) => r !== "ETUDIANT").map((r) => ({
+                value: r,
+                label: ROLE_LABELS[r],
+              }))}
             />
           </div>
 

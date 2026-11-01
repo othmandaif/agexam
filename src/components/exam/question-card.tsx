@@ -12,6 +12,8 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   TRACE_ALGORITHME: "Trace d'algorithme",
   RECHERCHE_ERREUR: "Recherche d'erreur",
   COMPLEXITE: "Complexité",
+  ALGORITHME: "Algorithme à écrire",
+  REDACTION: "Réponse rédigée",
 };
 
 export interface QuestionCardData {
@@ -25,6 +27,12 @@ export interface QuestionCardData {
   durationSec: number;
   points: number;
   explanation?: string | null;
+  /** Question d'algorithme : corrigé et jeux d'essai (sortie figée si connue). */
+  algo?: {
+    kind?: "algo" | "texte";
+    solution: string;
+    tests: { inputs: string[]; expected?: string }[];
+  } | null;
   errors?: string[];
   warnings?: string[];
 }
@@ -102,7 +110,51 @@ export function QuestionCard({ question: q, meta, onErrorClick, className }: Que
           {q.prompt}
         </p>
       ) : null}
-      {q.code ? <CodeBlock code={q.code} language={q.codeLanguage} fontSize={13} /> : null}
+      {q.code ? (
+        <div className="flex flex-col gap-1">
+          {q.algo && q.algo.kind !== "texte" ? (
+            <span className="text-xs font-bold text-muted">Code de départ</span>
+          ) : null}
+          <CodeBlock code={q.code} language={q.codeLanguage} fontSize={13} />
+        </div>
+      ) : null}
+      {q.algo?.kind === "texte" ? (
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-bold text-success">
+            Réponse attendue (jamais montrée, sert à la correction)
+          </span>
+          <p className="rounded-lg bg-success-bg/50 px-3 py-2 text-sm whitespace-pre-line">
+            {q.algo.solution}
+          </p>
+        </div>
+      ) : q.algo ? (
+        <div className="flex flex-col gap-2">
+          {q.algo.solution ? (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-bold text-success">Corrigé (jamais montré)</span>
+              <CodeBlock code={q.algo.solution} language="PSEUDO_CODE" fontSize={13} />
+            </div>
+          ) : null}
+          <span className="text-xs font-bold text-muted">
+            {q.algo.tests.length} jeu{q.algo.tests.length > 1 ? "x" : ""} d&apos;essai
+          </span>
+          <ul className="flex flex-col gap-1">
+            {q.algo.tests.map((t, i) => (
+              <li
+                key={i}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-lg bg-canvas px-3 py-1.5 font-mono text-[12.5px]"
+              >
+                <span className="text-muted">
+                  {i + 1}. {t.inputs.length ? t.inputs.join(" ; ") : "sans saisie"}
+                </span>
+                {t.expected !== undefined ? (
+                  <span className="whitespace-pre-wrap text-ink">→ {t.expected || "(rien)"}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <ul className="flex flex-col gap-1.5">
         {q.options.map((o, i) => (

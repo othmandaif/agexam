@@ -8,6 +8,7 @@ import { ExamEditor } from "@/features/exams/components/exam-editor";
 import { getEditorOptions } from "@/features/exams/server/queries";
 import { ROUTES } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Nouvel examen" };
 
@@ -23,7 +24,7 @@ export default async function NewExamPage({
     .filter((id) => z.uuid().safeParse(id).success)
     .slice(0, 60);
   const [options, fromBank] = await Promise.all([
-    getEditorOptions(user.establishmentId),
+    getEditorOptions(user.establishmentId, viewerOf(user)),
     getBankQuestionsByIds(user, questionIds),
   ]);
   const modulesUsed = [...new Set(fromBank.map((q) => q.moduleId))];

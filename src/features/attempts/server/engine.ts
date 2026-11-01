@@ -11,6 +11,7 @@ import {
 import type { AttemptQuestionStatus, AttemptStatus, SanctionType } from "@/domain/enums";
 import { examPhase } from "@/domain/exam-lifecycle";
 import { DEFAULT_SECURITY_SETTINGS, type QuestionOption } from "@/domain/exam-settings";
+import { algoRatio, type AlgoGrading } from "@/domain/algo-grading";
 import { isExactMatch, scoreAttempt, scoreQuestion } from "@/domain/scoring";
 import { isViolationEvent, sanctionFor, shouldMergeIntoIncident } from "@/domain/violations";
 import type { TenantUser } from "@/server/auth/session";
@@ -24,7 +25,9 @@ import {
   incidents,
   questionVersions,
   securityEvents,
+  type AlgoQuestionData,
 } from "@/server/db/schema";
+import { scheduleAlgoGrading } from "./algo-grader";
 import { AppError, errors } from "@/server/http/errors";
 import type {
   AttemptClientState,
@@ -57,7 +60,17 @@ interface QuestionRow {
   explanation: string | null;
   /** Sorties du mode examen pendant cette question. */
   violationCount: number;
+  /** Question d'algorithme : corrigé + jeux d'essai (jamais envoyés au navigateur). */
+  algo: AlgoQuestionData | null;
+  codeAnswer: string | null;
+  grading: AlgoGrading | null;
 }
+
+/** Réponse donnée : case(s) cochée(s), ou algorithme non vide. */
+const hasAnswer = (q: Pick<QuestionRow, "algo" | "codeAnswer" | "selectedOptionIds">) =>
+  q.algo ? !!q.codeAnswer?.trim() : q.selectedOptionIds.length > 0;
+
+export const MAX_CODE_LENGTH = 20_000;
 
 /** Contexte d'une requête : tentative verrouillée (FOR UPDATE) + examen + questions. */
 interface Ctx {
@@ -115,6 +128,9 @@ async function loadContext(tx: Tx, attemptId: string, studentId: string | null):
       options: questionVersions.options,
       explanation: questionVersions.explanation,
       violationCount: attemptQuestions.violationCount,
+      algo: questionVersions.algo,
+      codeAnswer: attemptQuestions.codeAnswer,
+      grading: attemptQuestions.grading,
     })
     .from(attemptQuestions)
     .innerJoin(examQuestions, eq(examQuestions.id, attemptQuestions.examQuestionId))
@@ -209,7 +225,16 @@ async function setQuestion(
   ctx: Ctx,
   q: QuestionRow,
   patch: Partial<
-    Pick<QuestionRow, "status" | "selectedOptionIds" | "shownAt" | "expiresAt" | "violationCount">
+    Pick<
+      QuestionRow,
+      | "status"
+      | "selectedOptionIds"
+      | "shownAt"
+      | "expiresAt"
+      | "violationCount"
+      | "codeAnswer"
+      | "grading"
+    >
   > & {
     answeredAt?: Date;
   },
@@ -252,7 +277,7 @@ async function closeCurrentWithSavedAnswer(ctx: Ctx) {
   const cur = current(ctx);
   if (!cur) return;
   await setQuestion(ctx, cur, {
-    status: cur.selectedOptionIds.length > 0 ? "REPONDUE" : "EXPIREE",
+    status: hasAnswer(cur) ? "REPONDUE" : "EXPIREE",
   });
 }
 
@@ -262,24 +287,20 @@ const scoringStatus = (q: QuestionRow): AttemptQuestionStatus =>
 
 /** Calcule et enregistre la note de chaque question et de la tentative. */
 async function storeScores(ctx: Ctx) {
-  const scored = ctx.questions.map((q) => {
-    const correct = q.options.filter((o) => o.isCorrect).map((o) => o.id);
-    const s = scoreQuestion({
-      status: scoringStatus(q),
-      selectedOptionIds: q.selectedOptionIds,
-      correctOptionIds: correct,
-      points: q.points,
-    });
-    return { id: q.id, isCorrect: s.isCorrect, points: s.awarded, correct };
+  const inputs = ctx.questions.map((q) => ({
+    status: scoringStatus(q),
+    selectedOptionIds: q.selectedOptionIds,
+    correctOptionIds: q.options.filter((o) => o.isCorrect).map((o) => o.id),
+    points: q.points,
+    optionCount: q.options.length,
+    // Algorithme : part fixée par la correction (0 provisoire si en attente).
+    ...(q.algo ? { ratio: algoRatio(q.grading) } : {}),
+  }));
+  const scored = ctx.questions.map((q, i) => {
+    const s = scoreQuestion(inputs[i]!);
+    return { id: q.id, isCorrect: s.isCorrect, points: s.awarded };
   });
-  const total = scoreAttempt(
-    ctx.questions.map((q, i) => ({
-      status: scoringStatus(q),
-      selectedOptionIds: q.selectedOptionIds,
-      correctOptionIds: scored[i]!.correct,
-      points: q.points,
-    })),
-  );
+  const total = scoreAttempt(inputs);
 
   if (scored.length > 0) {
     ctx.writes.push(
@@ -308,8 +329,16 @@ async function storeScores(ctx: Ctx) {
   });
 }
 
-/** Termine la tentative : notation, reçu. */
+/** Termine la tentative : notation, reçu. Les algorithmes rendus partent en correction. */
 async function submit(ctx: Ctx, status: Exclude<AttemptStatus, "EN_COURS" | "ANNULEE">) {
+  let toGrade = false;
+  for (const q of ctx.questions) {
+    if (q.algo && hasAnswer(q) && !q.grading && q.status !== "INVALIDEE") {
+      await setQuestion(ctx, q, { grading: { status: "pending" } });
+      toGrade = true;
+    }
+  }
+  if (toGrade) scheduleAlgoGrading(ctx.attempt.id);
   await storeScores(ctx);
   await setAttempt(ctx, {
     status,
@@ -360,7 +389,7 @@ async function sync(ctx: Ctx) {
     if (!cur.expiresAt || ctx.now.getTime() <= cur.expiresAt.getTime() + toleranceMs) return;
 
     const { outcome, connectionLost } = resolveExpiredQuestion({
-      selectedCount: cur.selectedOptionIds.length,
+      selectedCount: hasAnswer(cur) ? 1 : 0,
       shownAt: cur.shownAt ?? cur.expiresAt,
       expiresAt: cur.expiresAt,
       lastSeenAt: ctx.attempt.lastHeartbeatAt,
@@ -411,7 +440,7 @@ function practiceFeedback(ctx: Ctx): PracticeFeedback | null {
       .map((o) => ({ id: o.id, label: o.label, isCorrect: o.isCorrect })),
     selectedOptionIds: q.selectedOptionIds,
     correct:
-      q.status === "NEUTRALISEE" || q.neutralized
+      q.status === "NEUTRALISEE" || q.neutralized || q.algo
         ? null
         : q.status !== "INVALIDEE" && isExactMatch(q.selectedOptionIds, correctIds),
     explanation: q.explanation,
@@ -443,6 +472,7 @@ function buildState(ctx: Ctx): AttemptClientState {
     questionViolations: cur?.violationCount ?? 0,
     settings: {
       blockCopyPaste: settings.blockCopyPaste,
+      algoValidation: settings.validateAlgoGrades ?? true,
       heartbeatIntervalSec: settings.heartbeatIntervalSec,
       answerToleranceSec: settings.answerToleranceSec,
       pauseLeftSec: Math.round(pauseLeftMs(ctx) / 1000),
@@ -456,11 +486,19 @@ function buildState(ctx: Ctx): AttemptClientState {
             code: cur.code,
             codeLanguage: cur.codeLanguage,
             // Ordre propre à l'étudiant, sans « isCorrect ».
-            options: cur.optionOrder
-              .map((id) => byId.get(id))
-              .filter((o): o is QuestionOption => !!o)
-              .map((o) => ({ id: o.id, label: o.label })),
-            multiple: isMultipleAnswer(cur.options),
+            options: cur.algo
+              ? []
+              : cur.optionOrder
+                  .map((id) => byId.get(id))
+                  .filter((o): o is QuestionOption => !!o)
+                  .map((o) => ({ id: o.id, label: o.label })),
+            multiple: !cur.algo && isMultipleAnswer(cur.options),
+            kind: cur.algo ? (cur.algo.kind === "texte" ? "texte" : "algo") : "choice",
+            codeAnswer: cur.algo
+              ? cur.algo.kind === "texte"
+                ? (cur.codeAnswer ?? "")
+                : (cur.codeAnswer ?? cur.code ?? "")
+              : null,
             points: cur.points,
             // Chrono global : la barre de temps porte sur toute la tentative.
             durationSec: Math.round(
@@ -507,8 +545,15 @@ async function claimSession(ctx: Ctx, sessionId: string) {
   await setAttempt(ctx, { sessionId });
 }
 
-const pauseLeftMs = (ctx: Ctx) =>
-  Math.max(0, settingsOf(ctx.exam).maxNetworkPauseSec - ctx.attempt.pausedSec) * 1000;
+/**
+ * Coupure réseau : pas de plafond. La question en cours est bloquée (chrono en
+ * pause, question masquée côté étudiant) jusqu'au retour du réseau ; seule la
+ * fermeture de l'examen arrête la tentative. Aucune question n'est sautée.
+ */
+const pauseLeftMs = (ctx: Ctx) => {
+  const closes = ctx.exam.closesAt?.getTime();
+  return closes ? Math.max(0, closes - ctx.now.getTime()) : 7 * 24 * 3_600_000;
+};
 
 /**
  * Coupure réseau : le chrono est mis en pause. Au retour de l'étudiant, le temps
@@ -624,11 +669,37 @@ export function saveAnswer(
   );
 }
 
+/** Question d'algorithme : enregistre le code en cours (sauvegarde régulière). */
+export function saveCode(
+  student: TenantUser,
+  attemptId: string,
+  input: { attemptQuestionId: string; code: string },
+  sessionId?: string,
+) {
+  return withAttempt(
+    student,
+    attemptId,
+    async (ctx) => {
+      const cur = current(ctx);
+      if (!cur || cur.id !== input.attemptQuestionId || ctx.attempt.status !== ACTIVE) {
+        return { accepted: false, state: buildState(ctx) };
+      }
+      if (!cur.algo) throw errors.badRequest("Cette question n'attend pas de réponse rédigée.");
+      await setQuestion(ctx, cur, {
+        codeAnswer: input.code.slice(0, MAX_CODE_LENGTH),
+        answeredAt: ctx.now,
+      });
+      return { accepted: true, state: buildState(ctx) };
+    },
+    sessionId,
+  );
+}
+
 /** Valide la question en cours et passe à la suivante (idempotent). */
 export function nextQuestion(
   student: TenantUser,
   attemptId: string,
-  input: { attemptQuestionId: string; selectedOptionIds: string[] },
+  input: { attemptQuestionId: string; selectedOptionIds: string[]; code?: string },
   sessionId?: string,
 ) {
   return withAttempt(
@@ -637,18 +708,56 @@ export function nextQuestion(
     async (ctx) => {
       const cur = current(ctx);
       if (cur && cur.id === input.attemptQuestionId && ctx.attempt.status === ACTIVE) {
-        checkSelection(cur, input.selectedOptionIds);
-        await setQuestion(ctx, cur, {
-          selectedOptionIds: input.selectedOptionIds,
-          status: input.selectedOptionIds.length > 0 ? "REPONDUE" : "EXPIREE",
-          answeredAt: ctx.now,
-        });
+        if (cur.algo) {
+          if (input.code !== undefined) {
+            await setQuestion(ctx, cur, { codeAnswer: input.code.slice(0, MAX_CODE_LENGTH) });
+          }
+          await setQuestion(ctx, cur, {
+            status: hasAnswer(cur) ? "REPONDUE" : "EXPIREE",
+            answeredAt: ctx.now,
+          });
+        } else {
+          checkSelection(cur, input.selectedOptionIds);
+          await setQuestion(ctx, cur, {
+            selectedOptionIds: input.selectedOptionIds,
+            status: input.selectedOptionIds.length > 0 ? "REPONDUE" : "EXPIREE",
+            answeredAt: ctx.now,
+          });
+        }
         await openNext(ctx);
+      } else if (input.code?.trim()) {
+        await rescueLateCode(ctx, input.attemptQuestionId, input.code);
       }
       return buildState(ctx);
     },
     sessionId,
   );
+}
+
+/** Délai accordé à un algorithme envoyé juste après la clôture de sa question (chrono, réseau). */
+const LATE_CODE_GRACE_MS = 90_000;
+
+/**
+ * Validation arrivée après la clôture de la question (chrono écoulé pendant
+ * l'envoi) : le code n'est pas perdu s'il arrive dans le délai de grâce et
+ * qu'aucun code n'avait été enregistré.
+ */
+async function rescueLateCode(ctx: Ctx, attemptQuestionId: string, code: string) {
+  const q = ctx.questions.find((x) => x.id === attemptQuestionId);
+  if (!q?.algo || hasAnswer(q) || q.status !== "EXPIREE" || !q.expiresAt) return;
+  const settings = settingsOf(ctx.exam);
+  const limit = q.expiresAt.getTime() + settings.answerToleranceSec * 1000 + LATE_CODE_GRACE_MS;
+  if (ctx.now.getTime() > limit) return;
+  await setQuestion(ctx, q, {
+    codeAnswer: code.slice(0, MAX_CODE_LENGTH),
+    status: "REPONDUE",
+    answeredAt: ctx.now,
+  });
+  if (ctx.attempt.status !== ACTIVE) {
+    await setQuestion(ctx, q, { grading: { status: "pending" } });
+    scheduleAlgoGrading(ctx.attempt.id);
+    await storeScores(ctx);
+  }
 }
 
 /** Entraînement : démarre la question suivante après la lecture de la correction. */
@@ -984,7 +1093,7 @@ export async function revokeIncident(
         const q = ctx.questions.find((x) => x.id === incident.attemptQuestionId);
         if (q && q.status === "INVALIDEE") {
           await setQuestion(ctx, q, {
-            status: q.selectedOptionIds.length > 0 ? "REPONDUE" : "EXPIREE",
+            status: hasAnswer(q) ? "REPONDUE" : "EXPIREE",
           });
         }
       }
@@ -1060,6 +1169,13 @@ export async function rescoreExam(tx: Tx, examId: string): Promise<number> {
     await inContext(tx, id, null, storeScores);
   }
   return rows.length;
+}
+
+/** Recalcule la note d'une copie terminée (après la correction d'un algorithme). */
+export async function rescoreAttempt(tx: Tx, attemptId: string): Promise<void> {
+  await inContext(tx, attemptId, null, async (ctx) => {
+    if (ctx.attempt.status !== ACTIVE && ctx.attempt.status !== "ANNULEE") await storeScores(ctx);
+  });
 }
 
 export type { Tx as EngineTx };

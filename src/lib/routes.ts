@@ -11,6 +11,7 @@ export const ROUTES = {
   },
   student: {
     home: "/etudiant",
+    training: "/etudiant/entrainement",
   },
   trainer: {
     home: "/formateur",
@@ -21,6 +22,7 @@ export const ROUTES = {
     groups: "/formateur/groupes",
     students: "/formateur/etudiants",
     studentsImport: "/formateur/etudiants/import",
+    training: "/formateur/entrainement",
   },
   admin: {
     home: "/admin",
@@ -39,6 +41,8 @@ export const paths = {
   editExam: (examId: string) => `/formateur/examens/${examId}/modifier` as Route,
   examMonitor: (examId: string) => `/formateur/examens/${examId}/suivi` as Route,
   examResults: (examId: string) => `/formateur/examens/${examId}/resultats` as Route,
+  examGrading: (examId: string, all = false) =>
+    `/formateur/examens/${examId}/resultats/corriger${all ? "?vue=toutes" : ""}` as Route,
   examCopy: (examId: string, attemptId: string) =>
     `/formateur/examens/${examId}/resultats/${attemptId}` as Route,
   examResultsExport: (examId: string) => `/api/v1/exams/${examId}/results/export`,
@@ -50,6 +54,14 @@ export const paths = {
     `/api/v1/exams/${examId}/copies/${attemptId}/pdf`,
   examAnswerSheets: (examId: string) => `/formateur/examens/${examId}/resultats/feuilles` as Route,
   studentReport: (studentId: string) => `/formateur/etudiants/${studentId}` as Route,
+  track: (trackId: string) => `/formateur/entrainement/${trackId}` as Route,
+  importExercises: (trackId: string) =>
+    `/formateur/entrainement/${trackId}/exercices/importer` as Route,
+  newExercise: (trackId: string) => `/formateur/entrainement/${trackId}/exercices/nouveau` as Route,
+  exercise: (trackId: string, exerciseId: string) =>
+    `/formateur/entrainement/${trackId}/exercices/${exerciseId}` as Route,
+  studentTrack: (trackId: string) => `/etudiant/entrainement/${trackId}` as Route,
+  studentExercise: (exerciseId: string) => `/etudiant/entrainement/exercice/${exerciseId}` as Route,
   bankQuestion: (questionId: string) => `/formateur/banque/${questionId}` as Route,
   /** Nouvel examen prérempli avec des questions de la banque. */
   newExamFromBank: (questionIds: string[]) =>

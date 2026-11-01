@@ -5,6 +5,8 @@ import { EVENT_LABELS, SANCTION_LABELS } from "@/features/monitoring/labels";
 import type { AttemptTimeline } from "@/features/monitoring/types";
 import { formatDateTime, formatTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
+import { FreeAnswer } from "@/components/exam/free-answer";
+import { AlgoGradePanel } from "../client/algo-grade-panel";
 import { CopyActions } from "../client/copy-actions";
 import {
   fmtScore,
@@ -13,6 +15,7 @@ import {
   RESULT_STATUS_LABELS,
   RESULT_STATUS_TONE,
 } from "../labels";
+import { VERDICT_LABEL } from "../labels";
 import type { CopyQuestion, StudentCopy } from "../types";
 
 const letter = (i: number) => String.fromCharCode(65 + i);
@@ -25,9 +28,27 @@ function verdict(q: CopyQuestion): {
   if (q.status === "NEUTRALISEE") return { label: "Neutralisée (réseau)", tone: "neutral" };
   if (q.status === "INVALIDEE") return { label: "Invalidée (sanction)", tone: "danger" };
   if (q.status === "A_VENIR") return { label: "Non vue", tone: "neutral" };
-  if (q.selectedOptionIds.length === 0) return { label: "Sans réponse", tone: "warning" };
-  return q.isCorrect ? { label: "Juste", tone: "success" } : { label: "Faux", tone: "danger" };
+  if (!answered(q)) return { label: "Sans réponse", tone: "warning" };
+  if (q.algo) {
+    const g = q.algo.grading;
+    if (!g || g.status === "pending" || g.status === "running")
+      return { label: "Correction en cours", tone: "neutral" };
+    if (g.status === "failed") return { label: "À corriger", tone: "warning" };
+    if (g.status === "proposed") return { label: "Note proposée, à valider", tone: "warning" };
+  }
+  if (q.isCorrect) return { label: "Juste", tone: "success" };
+  if ((q.pointsAwarded ?? 0) > 0) return { label: "Partiellement juste", tone: "warning" };
+  return { label: "Faux", tone: "danger" };
 }
+
+const answered = (q: CopyQuestion) =>
+  q.algo ? !!q.algo.code?.trim() : q.selectedOptionIds.length > 0;
+
+const SOURCE_LABEL = {
+  auto: "Correction automatique (jeux d'essai + relecture)",
+  tests: "Correction automatique (jeux d'essai)",
+  manual: "Note du formateur",
+} as const;
 
 /** Copie complète d'un étudiant, vue formateur (bonnes réponses, temps, incidents). */
 export function StudentCopyView({
@@ -37,14 +58,13 @@ export function StudentCopyView({
   copy: StudentCopy;
   timeline: AttemptTimeline | null;
 }) {
+  const firstAlgoId = copy.questions.find((q) => q.algo)?.attemptQuestionId ?? null;
   const counted = copy.questions.filter((q) => !q.examNeutralized && q.status !== "NEUTRALISEE");
   const counts = {
     correct: counted.filter((q) => q.isCorrect).length,
-    wrong: counted.filter(
-      (q) => q.isCorrect === false && q.selectedOptionIds.length > 0 && q.status !== "INVALIDEE",
-    ).length,
-    blank: counted.filter((q) => q.selectedOptionIds.length === 0 && q.status !== "INVALIDEE")
+    wrong: counted.filter((q) => q.isCorrect === false && answered(q) && q.status !== "INVALIDEE")
       .length,
+    blank: counted.filter((q) => !answered(q) && q.status !== "INVALIDEE").length,
     invalidated: counted.filter((q) => q.status === "INVALIDEE").length,
   };
   const duration =
@@ -105,6 +125,8 @@ export function StudentCopyView({
             attemptId={copy.attemptId}
             status={copy.status}
             flagged={copy.flagged}
+            released={copy.released}
+            toValidate={copy.toValidate}
             studentName={copy.student.fullName}
           />
         </div>
@@ -165,6 +187,7 @@ export function StudentCopyView({
           return (
             <article
               key={q.attemptQuestionId}
+              id={q.algo && q.attemptQuestionId === firstAlgoId ? "algo" : undefined}
               className="flex break-inside-avoid flex-col gap-3 rounded-card border border-line bg-surface p-5"
             >
               <header className="flex flex-wrap items-start justify-between gap-3">
@@ -189,8 +212,126 @@ export function StudentCopyView({
                   ) : null}
                 </div>
               </header>
-              {q.code ? (
+              {q.code && !q.algo ? (
                 <CodeBlock code={q.code} language={q.codeLanguage ?? "PSEUDO_CODE"} fontSize={13} />
+              ) : null}
+              {q.algo ? (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-bold text-muted">
+                      {q.algo.kind === "texte"
+                        ? "Réponse de l'étudiant"
+                        : "Algorithme de l'étudiant"}
+                    </span>
+                    <FreeAnswer text={q.algo.code} kind={q.algo.kind} />
+                  </div>
+                  {(() => {
+                    const g = q.algo.grading;
+                    if (!answered(q) && !g) return null;
+                    if (!g || g.status === "pending" || g.status === "running")
+                      return (
+                        <p className="rounded-field border border-line-soft bg-canvas px-3 py-2.5 text-sm text-muted">
+                          Correction en cours… Rechargez la page dans quelques secondes, ou utilisez
+                          « Relancer la correction » si elle n&apos;aboutit pas.
+                        </p>
+                      );
+                    if (g.status === "failed")
+                      return (
+                        <p className="rounded-field border border-warning/30 bg-warning-bg px-3 py-2.5 text-sm text-ink">
+                          La correction automatique n&apos;a pas abouti
+                          {g.reviewError ? ` (${g.reviewError})` : ""}. Relancez-la ou notez
+                          manuellement.
+                        </p>
+                      );
+                    return (
+                      <div className="rounded-field border border-line-soft bg-canvas px-3 py-2.5 text-sm">
+                        <p className="font-semibold text-ink">
+                          {SOURCE_LABEL[g.source ?? "tests"]}
+                          {g.status === "proposed" ? (
+                            <span className="text-warning">
+                              {" "}
+                              · proposition :{" "}
+                              {fmtScore(Math.round((g.ratio ?? 0) * q.points * 100) / 100)} /{" "}
+                              {fmtScore(q.points)} pt (à valider)
+                            </span>
+                          ) : null}
+                          {g.testsTotal ? (
+                            <span className="font-normal text-muted">
+                              {" "}
+                              · {g.testsPassed} / {g.testsTotal} jeux d&apos;essai réussis
+                            </span>
+                          ) : null}
+                        </p>
+                        {g.verdict ? (
+                          <p className="mt-1 text-[13px]">
+                            <span className="font-semibold text-muted">Verdict : </span>
+                            <span className="font-bold text-ink">{VERDICT_LABEL[g.verdict]}</span>
+                          </p>
+                        ) : null}
+                        {g.comment ? <p className="mt-1 text-ink-soft">{g.comment}</p> : null}
+                        {g.analysis ? (
+                          <details className="mt-2 rounded-field border border-line-soft bg-surface px-3 py-2">
+                            <summary className="cursor-pointer text-[13px] font-semibold text-primary">
+                              Analyse détaillée de la copie (visible par vous seul)
+                            </summary>
+                            <div className="mt-1.5 flex flex-col gap-1 text-[13px] text-ink-soft">
+                              {g.analysis.split("\n").map((line, i) => (
+                                <p key={i}>{line}</p>
+                              ))}
+                            </div>
+                          </details>
+                        ) : null}
+                        {g.criteria?.length ? (
+                          <table className="mt-2 w-full text-[13px]">
+                            <caption className="sr-only">Détail de la note par critère</caption>
+                            <tbody>
+                              {g.criteria.map((c) => (
+                                <tr key={c.key} className="border-t border-line-soft align-top">
+                                  <td className="py-1.5 pr-3 font-semibold whitespace-nowrap">
+                                    {c.label}
+                                  </td>
+                                  <td className="py-1.5 pr-3 text-right font-bold whitespace-nowrap tabular-nums">
+                                    {fmtScore(Math.round(c.score * q.points * 100) / 100)} /{" "}
+                                    {fmtScore(Math.round(c.max * q.points * 100) / 100)}
+                                  </td>
+                                  <td className="py-1.5 text-muted">{c.note}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : null}
+                        {g.reviewSource === "bareme" ? (
+                          <p className="mt-2 text-xs text-warning">
+                            Relecture DeepSeek indisponible
+                            {g.reviewError ? ` (${g.reviewError})` : ""} : note calculée sur le
+                            barème, à vérifier.
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
+                  {q.status !== "INVALIDEE" && !q.examNeutralized && q.status !== "A_VENIR" ? (
+                    <AlgoGradePanel
+                      attemptQuestionId={q.attemptQuestionId}
+                      points={q.points}
+                      current={q.pointsAwarded}
+                      canRegrade={answered(q)}
+                      proposed={
+                        q.algo.grading?.status === "proposed"
+                          ? Math.round((q.algo.grading.ratio ?? 0) * q.points * 100) / 100
+                          : null
+                      }
+                    />
+                  ) : null}
+                  <details className="text-sm print:hidden">
+                    <summary className="cursor-pointer font-semibold text-muted">
+                      {q.algo.kind === "texte" ? "Voir la réponse attendue" : "Voir le corrigé"}
+                    </summary>
+                    <div className="mt-2">
+                      <FreeAnswer text={q.algo.solution} kind={q.algo.kind} />
+                    </div>
+                  </details>
+                </div>
               ) : null}
               <ul className="flex flex-col gap-1.5">
                 {q.options.map((o, i) => {

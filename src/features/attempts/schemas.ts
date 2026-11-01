@@ -16,6 +16,16 @@ export const answerSchema = z.object({
   selectedOptionIds: z.array(z.string().min(1).max(36)).max(10),
 });
 
+/** Validation d'une question : sélection (QCM) ou algorithme final. */
+export const nextSchema = answerSchema.extend({
+  code: z.string().max(20_000).optional(),
+});
+
+export const codeSchema = z.object({
+  attemptQuestionId: z.uuid(),
+  code: z.string().max(20_000),
+});
+
 export const eventsSchema = z.object({
   events: z
     .array(

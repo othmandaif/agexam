@@ -2,11 +2,12 @@ import { buildImportTemplate } from "@/features/accounts/import/server";
 import { listGroupOptions } from "@/features/accounts/server/queries";
 import { requireApiTenant } from "@/server/auth/session";
 import { apiRoute } from "@/server/http/api";
+import { viewerOf } from "@/server/scope";
 
 /** Modèle Excel à remplir pour importer des étudiants (groupes existants proposés). */
 export const GET = apiRoute(async () => {
   const actor = await requireApiTenant("ADMIN", "FORMATEUR");
-  const groups = await listGroupOptions(actor.establishmentId);
+  const groups = await listGroupOptions(actor.establishmentId, undefined, viewerOf(actor));
   const buffer = await buildImportTemplate(
     groups.map((g) => g.name),
     { withGroupColumn: actor.role === "ADMIN" },

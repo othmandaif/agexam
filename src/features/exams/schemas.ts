@@ -15,6 +15,8 @@ export const examSettingsSchema = z.object({
   resultReleaseMode: z.enum(RESULT_RELEASE_MODES),
   shuffleAnswers: z.boolean(),
   blockCopyPaste: z.boolean(),
+  /** Algorithmes : notes proposées, validées par le formateur avant de compter. */
+  validateAlgoGrades: z.boolean().default(true),
   /** Entraînement : sans surveillance ni code, tentatives illimitées, correction immédiate. */
   isPractice: z.boolean().default(false),
   /** Chrono par question (durées du texte) ou durée unique pour tout l'examen. */
@@ -36,6 +38,7 @@ export const DEFAULT_EXAM_SETTINGS: ExamSettings = {
   resultReleaseMode: "IMMEDIAT",
   shuffleAnswers: true,
   blockCopyPaste: true,
+  validateAlgoGrades: true,
   isPractice: false,
   timerMode: "PAR_QUESTION",
   globalDurationSec: null,

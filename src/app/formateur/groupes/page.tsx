@@ -4,6 +4,7 @@ import { listGroups } from "@/features/groups/server/queries";
 import { requireTenant } from "@/server/auth/session";
 import { getViewYear } from "@/server/year";
 import { currentAcademicYear } from "@/domain/academic-year";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Groupes" };
 
@@ -12,8 +13,8 @@ export default async function GroupsPage() {
   const year = await getViewYear();
   return (
     <GroupsBoard
-      groups={await listGroups(user.establishmentId, year)}
-      canManage={user.role === "ADMIN" && year === currentAcademicYear()}
+      groups={await listGroups(user.establishmentId, year, viewerOf(user))}
+      canManage={user.role === "FORMATEUR" && year === currentAcademicYear()}
     />
   );
 }

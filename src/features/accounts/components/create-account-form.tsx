@@ -22,7 +22,7 @@ export function CreateAccountForm({ groups, studentOnly = false }: CreateAccount
     createAccountAction,
     IDLE,
   );
-  const [role, setRole] = useState<UserRole>("ETUDIANT");
+  const [role, setRole] = useState<UserRole>(studentOnly ? "ETUDIANT" : "FORMATEUR");
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
@@ -76,7 +76,7 @@ export function CreateAccountForm({ groups, studentOnly = false }: CreateAccount
               value={role}
               onChange={(e) => setRole(e.target.value as UserRole)}
             >
-              {USER_ROLES.map((r) => (
+              {USER_ROLES.filter((r) => r !== "ETUDIANT").map((r) => (
                 <option key={r} value={r}>
                   {ROLE_LABELS[r]}
                 </option>

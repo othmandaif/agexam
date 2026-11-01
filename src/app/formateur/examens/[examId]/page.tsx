@@ -38,7 +38,7 @@ import {
   regenerateCodeAction,
   unpublishExamAction,
 } from "@/features/exams/server/actions";
-import { getExamDetail } from "@/features/exams/server/queries";
+import { getExamDetail, listExamStudents } from "@/features/exams/server/queries";
 import { formatDateTime } from "@/lib/datetime";
 import { paths, ROUTES } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
@@ -60,6 +60,7 @@ export default async function ExamPage({ params }: { params: Promise<{ examId: s
   if (!z.uuid().safeParse(examId).success) notFound();
 
   const exam = await getExamDetail(user, examId);
+  const students = exam ? await listExamStudents(exam.id) : [];
   if (!exam) notFound();
 
   const phase = examPhase(exam, new Date());
@@ -214,6 +215,42 @@ export default async function ExamPage({ params }: { params: Promise<{ examId: s
           </CardContent>
         </Card>
 
+        {/* Étudiants concernés */}
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              Étudiants concernés{" "}
+              <span className="text-base font-semibold text-muted">({students.length})</span>
+            </CardTitle>
+            <CardDescription>Membres des groupes choisis + étudiants ajoutés.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {students.length === 0 ? (
+              <p className="rounded-field bg-warning-bg px-3 py-2 text-sm font-semibold text-warning">
+                Aucun étudiant : le groupe choisi est vide. Ajoutez des étudiants au groupe (page
+                Groupes) ou individuellement dans l&apos;examen.
+              </p>
+            ) : (
+              <details>
+                <summary className="cursor-pointer text-sm font-semibold text-primary">
+                  Voir la liste
+                </summary>
+                <ul className="mt-3 flex max-h-72 flex-col gap-1 overflow-auto text-sm">
+                  {students.map((s) => (
+                    <li
+                      key={s.id}
+                      className="flex justify-between gap-3 border-b border-line-soft py-1.5"
+                    >
+                      <span className="font-semibold">{s.fullName}</span>
+                      <span className="text-muted">{s.groups || "ajouté"}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Actions */}
         <Card>
           <CardHeader>
@@ -345,6 +382,12 @@ export default async function ExamPage({ params }: { params: Promise<{ examId: s
                     durationSec: q.durationSec,
                     points: q.points,
                     explanation: q.explanation,
+                    algo: q.algo,
+                    type: q.algo
+                      ? q.algo.kind === "texte"
+                        ? "REDACTION"
+                        : "ALGORITHME"
+                      : undefined,
                   }}
                 />
               ))}

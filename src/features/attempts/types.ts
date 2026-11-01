@@ -20,6 +20,11 @@ export interface ClientQuestion {
   options: { id: string; label: string }[];
   /** Cases à cocher (plusieurs réponses possibles). */
   multiple: boolean;
+  /** choice : QCM ; algo : algorithme à écrire dans l'éditeur. */
+  /** algo : algorithme AGSyntax ; texte : réponse rédigée (question directe). */
+  kind: "choice" | "algo" | "texte";
+  /** Algorithme enregistré (ou code de départ) ; null pour un QCM. */
+  codeAnswer: string | null;
   points: number;
   durationSec: number;
   shownAt: string;
@@ -62,6 +67,8 @@ export interface AttemptClientState {
   questionViolations: number;
   settings: {
     blockCopyPaste: boolean;
+    /** Notes des algorithmes validées par le formateur avant d'être affichées. */
+    algoValidation: boolean;
     heartbeatIntervalSec: number;
     answerToleranceSec: number;
     /** Temps encore récupérable après des coupures réseau. */

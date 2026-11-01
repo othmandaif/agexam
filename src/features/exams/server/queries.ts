@@ -1,10 +1,12 @@
 import "server-only";
+import { groupScope } from "@/server/scope";
 import { currentAcademicYear } from "@/domain/academic-year";
 import type { StudentPick } from "../schemas";
 import { and, asc, desc, eq, gt, ne, sql } from "drizzle-orm";
 import type { QuestionOption } from "@/domain/exam-settings";
 import type { TenantUser } from "@/server/auth/session";
 import { getDb } from "@/server/db/client";
+import { enrolledIdsSql } from "@/server/db/enrolment";
 import {
   attempts,
   examCandidates,
@@ -221,6 +223,7 @@ export async function getExamDetail(actor: TenantUser, examId: string) {
         codeLanguage: questionVersions.codeLanguage,
         options: questionVersions.options,
         explanation: questionVersions.explanation,
+        algo: questionVersions.algo,
       })
       .from(examQuestions)
       .innerJoin(questionVersions, eq(questionVersions.id, examQuestions.questionVersionId))
@@ -254,7 +257,7 @@ export async function getExamDetail(actor: TenantUser, examId: string) {
 export type ExamDetail = NonNullable<Awaited<ReturnType<typeof getExamDetail>>>;
 
 /** Listes pour l'éditeur : modules et groupes de l'établissement. */
-export async function getEditorOptions(establishmentId: string) {
+export async function getEditorOptions(establishmentId: string, viewerId: string | null = null) {
   const db = getDb();
   const [moduleRows, groupRows] = await Promise.all([
     db
@@ -273,6 +276,7 @@ export async function getEditorOptions(establishmentId: string) {
         and(
           eq(groups.establishmentId, establishmentId),
           eq(groups.academicYear, currentAcademicYear()),
+          groupScope(viewerId),
         ),
       )
       .orderBy(asc(groups.name)),
@@ -361,4 +365,18 @@ export async function searchStudents(
     .orderBy(asc(profiles.fullName))
     .limit(12);
   return rows;
+}
+
+/** Étudiants concernés par l'examen (membres des groupes + ajoutés), avec leur groupe. */
+export async function listExamStudents(examId: string) {
+  return (await getDb().execute(sql`
+    select p.id, p.full_name as "fullName", p.email,
+      coalesce((select string_agg(g.name, ', ' order by g.name) from group_members gm
+        join groups g on g.id = gm.group_id
+        join exam_groups eg on eg.group_id = g.id and eg.exam_id = ${examId}
+        where gm.profile_id = p.id), '') as groups
+    from profiles p
+    where p.id in ${enrolledIdsSql(examId)}
+    order by p.full_name
+  `)) as unknown as { id: string; fullName: string; email: string; groups: string }[];
 }

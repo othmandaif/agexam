@@ -14,6 +14,7 @@ import { formatWindow } from "@/lib/datetime";
 import { paths } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
 import { getViewYear } from "@/server/year";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Recherche" };
 
@@ -34,7 +35,7 @@ export default async function SearchPage({
   const [exams, groups, questions] = q
     ? await Promise.all([
         listExams(user, year),
-        listGroups(user.establishmentId, year),
+        listGroups(user.establishmentId, year, viewerOf(user)),
         listBankQuestions(user, parseBankFilters({ q }), 8),
       ])
     : [[], [], { items: [], total: 0, truncated: false }];

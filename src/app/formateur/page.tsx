@@ -33,6 +33,7 @@ import { formatWindow } from "@/lib/datetime";
 import { paths, ROUTES } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
 import { getViewYear } from "@/server/year";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Tableau de bord" };
 
@@ -67,7 +68,7 @@ export default async function TrainerDashboardPage() {
   const [examRows, analytics, groups, questionCount] = await Promise.all([
     listExams(user, year),
     getAnalytics(user, { ...parseAnalyticsFilters({}), year }),
-    listGroups(user.establishmentId, year),
+    listGroups(user.establishmentId, year, viewerOf(user)),
     countBankQuestions(user),
   ]);
   const exams = examRows.map((e) => ({ ...e, phase: examPhase(e, now) }));

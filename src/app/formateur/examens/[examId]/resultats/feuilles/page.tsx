@@ -34,10 +34,11 @@ function mark(q: CopyQuestion): Mark {
     return { text: "N", tone: "bg-neutral-bg text-neutral" };
   }
   if (q.status === "INVALIDEE") return { text: "X", tone: "bg-danger-bg text-danger" };
-  if (q.selectedOptionIds.length === 0) return { text: "–", tone: "bg-canvas text-muted" };
-  return q.isCorrect
-    ? { text: "✓", tone: "bg-success-bg text-success" }
-    : { text: "✗", tone: "bg-danger-bg text-danger" };
+  if (q.algo ? !q.algo.code?.trim() : q.selectedOptionIds.length === 0)
+    return { text: "–", tone: "bg-canvas text-muted" };
+  if (q.isCorrect) return { text: "✓", tone: "bg-success-bg text-success" };
+  if ((q.pointsAwarded ?? 0) > 0) return { text: "½", tone: "bg-warning-bg text-warning" };
+  return { text: "✗", tone: "bg-danger-bg text-danger" };
 }
 
 /** Toutes les feuilles de réponses de la classe, une par étudiant, prêtes à imprimer. */
@@ -118,8 +119,8 @@ export default async function AnswerSheetsPage({
           <PrintButton label="Imprimer cette page" />
         </div>
         <p className="text-xs text-muted">
-          ✓ juste · ✗ fausse · – sans réponse · X invalidée (sortie du mode examen) · N neutralisée.
-          Lettres dans l&apos;ordre de référence de l&apos;examen.
+          ✓ juste · ½ partiellement juste · ✗ fausse · – sans réponse · X invalidée (sortie du mode
+          examen) · N neutralisée. Lettres dans l&apos;ordre de référence de l&apos;examen.
         </p>
         <div className="flex flex-wrap gap-3 print:hidden">
           <UrlSearch placeholder="Rechercher un étudiant…" label="Rechercher un étudiant" />
@@ -215,10 +216,14 @@ export default async function AnswerSheetsPage({
                             {q.prompt}
                           </td>
                           <td className="py-1.5 pr-2 text-center font-semibold">
-                            {letters(q.selectedOptionIds, letterOf)}
+                            {q.algo
+                              ? q.algo.code?.trim()
+                                ? "algo"
+                                : "—"
+                              : letters(q.selectedOptionIds, letterOf)}
                           </td>
                           <td className="py-1.5 pr-2 text-center text-muted">
-                            {letters(expected, letterOf)}
+                            {q.algo ? "—" : letters(expected, letterOf)}
                           </td>
                           <td className="py-1.5 pr-2 text-center">
                             <span

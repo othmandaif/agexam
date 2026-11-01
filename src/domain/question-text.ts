@@ -13,11 +13,17 @@
  * - Plusieurs bonnes réponses : QCM à réponses multiples (détecté automatiquement).
  * - Code entre ``` (langage facultatif : pseudo, python, sql, js, c, java).
  * - Facultatif : DUREE, POINTS, EXPLICATION, TYPE.
+ * - Question d'algorithme (TYPE: algo) : pas de réponses A), B)… ; corrigé entre
+ *   ```solution et ``` ; une ligne « TEST: 5 ; 3 » par jeu d'essai (saisies
+ *   séparées par « ; ») ; un bloc ``` simple = code de départ proposé.
+ * - Question directe / rédaction (TYPE: texte) : réponse rédigée par l'étudiant,
+ *   corrigée automatiquement ; réponse attendue (éléments clés) entre ```reponse et ```.
  *
  * Module pur : utilisé dans le navigateur (aperçu en direct) ET sur le serveur
  * (seule la version serveur fait foi à l'enregistrement).
  */
 import type { CodeLanguage, QuestionType } from "./enums";
+import { compile } from "./agsyntax";
 import { formatDuration, isDurationInRange, parseDuration } from "./duration";
 
 export const MAX_OPTIONS = 10;
@@ -52,10 +58,15 @@ export interface ParsedQuestion {
   durationFromText: boolean;
   points: number;
   explanation: string | null;
+  /** Question d'algorithme : corrigé + saisies des jeux d'essai (sorties figées à l'enregistrement).
+   * kind « texte » : question directe / rédaction (réponse attendue dans `solution`). */
+  algo: { solution: string; tests: { inputs: string[] }[]; kind?: "algo" | "texte" } | null;
   fieldLines: Partial<Record<EditableField, number>>;
   errors: string[];
   warnings: string[];
 }
+
+export const MAX_ALGO_TESTS = 15;
 
 export interface ParseResult {
   questions: ParsedQuestion[];
@@ -66,8 +77,19 @@ export interface ParseResult {
 const RE_QUESTION = /^\s*(?:q(?:uestion)?\s*\d*\s*[:.)-]|\d{1,3}\s*[.)])\s*(.*)$/i;
 const RE_OPTION = /^\s*(\*\s*)?([A-Ja-j])(?:\s*[).:]|\s+-)\s*(.+?)\s*$/;
 const RE_KEYWORD =
-  /^\s*(dur[ée]e|temps|time|duration|points?|pts|bar[èe]me|explication|explanation|feedback|answer|r[ée]ponses?|bonnes?\s+r[ée]ponses?|correct|type)\s*[:=]\s*(.*?)\s*$/i;
-const RE_FENCE_OPEN = /^\s*```\s*([\w+#-]*)\s*$/;
+  /^\s*(dur[ée]e|temps|time|duration|points?|pts|bar[èe]me|explication|explanation|feedback|answer|r[ée]ponses?|bonnes?\s+r[ée]ponses?|correct|type|tests?|essai)\s*[:=]\s*(.*?)\s*$/i;
+const RE_FENCE_OPEN = /^\s*```\s*([\w+#\-\u00C0-\u017F]*)\s*$/;
+const SOLUTION_TAGS = new Set([
+  "solution",
+  "corrige",
+  "corrigé",
+  "reference",
+  "référence",
+  "reponse",
+  "réponse",
+  "attendu",
+  "attendue",
+]);
 const RE_FENCE_CLOSE = /^\s*```\s*$/;
 const RE_CORRECT_MARK = /\s*(\*|✓|✔)\s*$/;
 const RE_FIXED =
@@ -131,6 +153,15 @@ const TYPES: Record<string, QuestionType> = {
   bug: "RECHERCHE_ERREUR",
   complexite: "COMPLEXITE",
   complexité: "COMPLEXITE",
+  algo: "ALGORITHME",
+  algorithme: "ALGORITHME",
+  texte: "REDACTION",
+  redaction: "REDACTION",
+  rédaction: "REDACTION",
+  directe: "REDACTION",
+  question_directe: "REDACTION",
+  ouverte: "REDACTION",
+  libre: "REDACTION",
 };
 
 /** Durée proposée quand le formateur n'en indique pas. */
@@ -164,6 +195,8 @@ interface Draft {
   explanation: string | null;
   explicitType: QuestionType | null;
   answerLetters: string[] | null;
+  solution: string | null;
+  tests: { inputs: string[] }[];
   fieldLines: Partial<Record<EditableField, number>>;
   errors: string[];
 }
@@ -184,6 +217,8 @@ function newDraft(line: number, firstPromptLine: string): Draft {
     explanation: null,
     explicitType: null,
     answerLetters: null,
+    solution: null,
+    tests: [],
     fieldLines: {},
     errors: [],
   };
@@ -216,9 +251,13 @@ function applyKeyword(draft: Draft, rawKey: string, value: string, line: number)
     const t = TYPES[value.trim().toLowerCase().replace(/\s+/g, "_")];
     if (!t)
       draft.errors.push(
-        `Type inconnu « ${value} » (qcm, multiple, vf, trace, erreur, complexite).`,
+        `Type inconnu « ${value} » (qcm, multiple, vf, trace, erreur, complexite, algo, texte).`,
       );
     else draft.explicitType = t;
+    return;
+  }
+  if (key === "test" || key === "tests" || key === "essai") {
+    draft.tests.push({ inputs: value.trim() ? value.split(";").map((v) => v.trim()) : [] });
     return;
   }
   // answer / réponse(s) / bonne(s) réponse(s) / correct
@@ -242,6 +281,10 @@ function finalize(draft: Draft, number: number): ParsedQuestion {
   const options = draft.options;
 
   if (draft.unclosedFence) errors.push("Bloc de code non fermé : ajoutez ``` à la fin du code.");
+  if (draft.explicitType === "REDACTION") return finalizeText(draft, number, prompt, errors);
+  if (draft.explicitType === "ALGORITHME" || draft.solution !== null || draft.tests.length > 0) {
+    return finalizeAlgo(draft, number, prompt, errors);
+  }
   if (draft.codeAfterOptions) errors.push("Le code doit être placé avant les réponses.");
   if (!prompt && !draft.code) errors.push("Énoncé manquant.");
   if (prompt.length > 4000) errors.push("Énoncé trop long (4000 caractères maximum).");
@@ -316,9 +359,99 @@ function finalize(draft: Draft, number: number): ParsedQuestion {
     durationFromText: draft.durationSec !== null,
     points: draft.points ?? 1,
     explanation: draft.explanation,
+    algo: null,
     fieldLines: draft.fieldLines,
     errors,
     warnings,
+  };
+}
+
+function finalizeAlgo(
+  draft: Draft,
+  number: number,
+  prompt: string,
+  errors: string[],
+): ParsedQuestion {
+  const warnings: string[] = [];
+  if (!prompt) errors.push("Énoncé manquant.");
+  if (prompt.length > 4000) errors.push("Énoncé trop long (4000 caractères maximum).");
+  if (draft.explicitType && draft.explicitType !== "ALGORITHME") {
+    errors.push("Corrigé ou TEST réservés aux questions « TYPE: algo ».");
+  }
+  if (draft.options.length > 0) {
+    errors.push("Une question d'algorithme n'a pas de réponses A), B)… : retirez-les.");
+  }
+  if (draft.solution === null || !draft.solution.trim()) {
+    errors.push("Corrigé manquant : placez-le entre ```solution et ```.");
+  } else {
+    const c = compile(draft.solution);
+    if (!c.ok) {
+      errors.push(
+        `Corrigé invalide${c.error.line ? ` (ligne ${c.error.line} du corrigé)` : ""} : ${c.error.message}`,
+      );
+    }
+  }
+  if (draft.tests.length === 0) {
+    errors.push("Ajoutez au moins un jeu d'essai : « TEST: 5 ; 3 » (saisies séparées par ;).");
+  }
+  if (draft.tests.length > MAX_ALGO_TESTS) errors.push(`${MAX_ALGO_TESTS} jeux d'essai maximum.`);
+  return {
+    number,
+    startLine: draft.startLine,
+    lastContentLine: draft.lastContentLine,
+    prompt,
+    code: draft.code,
+    codeLanguage: draft.code !== null ? "PSEUDO_CODE" : null,
+    options: [],
+    type: "ALGORITHME",
+    multipleAnswers: false,
+    durationSec: draft.durationSec ?? 600,
+    durationFromText: draft.durationSec !== null,
+    points: draft.points ?? 4,
+    explanation: draft.explanation,
+    algo: { solution: draft.solution ?? "", tests: draft.tests },
+    fieldLines: draft.fieldLines,
+    errors,
+    warnings,
+  };
+}
+
+function finalizeText(
+  draft: Draft,
+  number: number,
+  prompt: string,
+  errors: string[],
+): ParsedQuestion {
+  if (!prompt) errors.push("Énoncé manquant.");
+  if (prompt.length > 4000) errors.push("Énoncé trop long (4000 caractères maximum).");
+  if (draft.options.length > 0) {
+    errors.push("Une question à réponse rédigée n'a pas de réponses A), B)… : retirez-les.");
+  }
+  if (draft.tests.length > 0)
+    errors.push("Les lignes TEST sont réservées aux questions « TYPE: algo ».");
+  if (draft.solution === null || !draft.solution.trim()) {
+    errors.push("Réponse attendue manquante : placez-la entre ```reponse et ```.");
+  } else if (draft.solution.length > 4000) {
+    errors.push("Réponse attendue trop longue (4000 caractères maximum).");
+  }
+  return {
+    number,
+    startLine: draft.startLine,
+    lastContentLine: draft.lastContentLine,
+    prompt,
+    code: draft.code,
+    codeLanguage: draft.code !== null ? codeLanguageFromTag(draft.codeTag ?? "") : null,
+    options: [],
+    type: "REDACTION",
+    multipleAnswers: false,
+    durationSec: draft.durationSec ?? 300,
+    durationFromText: draft.durationSec !== null,
+    points: draft.points ?? 2,
+    explanation: draft.explanation,
+    algo: { kind: "texte", solution: draft.solution ?? "", tests: [] },
+    fieldLines: draft.fieldLines,
+    errors,
+    warnings: [],
   };
 }
 
@@ -328,7 +461,7 @@ export function parseQuestionText(text: string): ParseResult {
   const drafts: Draft[] = [];
   const globalErrors: ParseResult["globalErrors"] = [];
   let current: Draft | null = null;
-  let fence: { lines: string[] } | null = null;
+  let fence: { lines: string[]; solution: boolean } | null = null;
 
   const start = (line: number, prompt: string) => {
     current = newDraft(line, prompt);
@@ -345,7 +478,9 @@ export function parseQuestionText(text: string): ParseResult {
     if (fence) {
       if (RE_FENCE_CLOSE.test(raw)) {
         if (draft) {
-          draft.code = fence.lines.join("\n").replace(/\s+$/, "");
+          const body = fence.lines.join("\n").replace(/\s+$/, "");
+          if (fence.solution) draft.solution = body;
+          else draft.code = body;
           draft.unclosedFence = false;
           draft.lastContentLine = line;
         }
@@ -370,11 +505,13 @@ export function parseQuestionText(text: string): ParseResult {
     const fenceOpen = RE_FENCE_OPEN.exec(raw);
     if (fenceOpen) {
       const target = draft && !draft.closed ? draft : start(line, "");
-      if (target.options.length > 0) target.codeAfterOptions = true;
-      target.codeTag = fenceOpen[1] ?? "";
+      const tag = (fenceOpen[1] ?? "").toLowerCase();
+      const solution = SOLUTION_TAGS.has(tag);
+      if (target.options.length > 0 && !solution) target.codeAfterOptions = true;
+      if (!solution) target.codeTag = fenceOpen[1] ?? "";
       target.unclosedFence = true;
       target.lastContentLine = line;
-      fence = { lines: [] };
+      fence = { lines: [], solution };
       continue;
     }
 
@@ -415,7 +552,7 @@ export function parseQuestionText(text: string): ParseResult {
     }
 
     // Ligne de texte libre.
-    if (!draft || (draft.options.length > 0 && draft.closed)) {
+    if (!draft || (draft.options.length > 0 && draft.closed) || draft.tests.length > 0) {
       start(line, raw);
     } else if (draft.options.length === 0) {
       draft.promptLines.push(raw.trim());
@@ -529,6 +666,9 @@ export interface QuestionTextInput {
   durationSec?: number | null;
   points?: number | null;
   explanation?: string | null;
+  /** Type forcé (ligne « TYPE: ») : vf, trace, erreur, complexite… */
+  type?: string;
+  algo?: { solution: string; tests: { inputs: string[] }[]; kind?: "algo" | "texte" } | null;
 }
 
 /** Produit le texte au format AGExam (utilisé pour l'import Excel et l'exemple). */
@@ -538,6 +678,9 @@ export function buildQuestionText(items: QuestionTextInput[]): string {
       const out: string[] = [];
       const [first = "", ...rest] = item.prompt.trim().split("\n");
       out.push(`Q: ${first}`, ...rest);
+      const isText = item.algo?.kind === "texte";
+      if (item.algo) out.push(isText ? "TYPE: texte" : "TYPE: algo");
+      else if (item.type) out.push(`TYPE: ${item.type}`);
       if (item.code && item.code.trim()) {
         out.push(
           "```" + tagFromCodeLanguage(item.codeLanguage ?? "PSEUDO_CODE"),
@@ -550,8 +693,16 @@ export function buildQuestionText(items: QuestionTextInput[]): string {
           `${String.fromCharCode(65 + i)}) ${o.label.replace(/\s+/g, " ").trim()}${o.isCorrect ? " *" : ""}`,
         );
       });
+      if (item.algo) {
+        out.push(
+          isText ? "```reponse" : "```solution",
+          item.algo.solution.replace(/\s+$/, ""),
+          "```",
+        );
+        for (const t of item.algo.tests) out.push(`TEST: ${t.inputs.join(" ; ")}`.trimEnd());
+      }
       if (item.durationSec) out.push(`DUREE: ${formatDuration(item.durationSec)}`);
-      if (item.points && item.points !== 1) out.push(`POINTS: ${item.points}`);
+      if (item.points && (item.points !== 1 || item.algo)) out.push(`POINTS: ${item.points}`);
       if (item.explanation && item.explanation.trim()) {
         out.push(`EXPLICATION: ${item.explanation.replace(/\s+/g, " ").trim()}`);
       }
@@ -560,9 +711,15 @@ export function buildQuestionText(items: QuestionTextInput[]): string {
     .join("\n\n");
 }
 
+/**
+ * Exemple inséré par le bouton « Insérer un exemple » : un mini-examen qui montre
+ * chaque type de question dans l'ordre conseillé. Le préfixe « [n/8 · type] » de
+ * chaque énoncé sert de plan au formateur : à supprimer avant publication.
+ */
 export const EXAMPLE_QUESTION_TEXT = buildQuestionText([
   {
-    prompt: "Quelle structure répète un bloc tant qu'une condition est vraie ?",
+    prompt:
+      "[1/8 · QCM une seule bonne réponse] Quelle structure répète un bloc tant qu'une condition est vraie ?",
     options: [
       { label: "Si … Alors", isCorrect: false },
       { label: "TantQue … Faire", isCorrect: true },
@@ -570,9 +727,11 @@ export const EXAMPLE_QUESTION_TEXT = buildQuestionText([
       { label: "Aucune des réponses", isCorrect: false },
     ],
     durationSec: 30,
+    explanation: "Une seule réponse marquée d'une étoile * : QCM simple.",
   },
   {
-    prompt: "Quelles instructions ajoutent un élément à la fin d'une liste Python ?",
+    prompt:
+      "[2/8 · QCM plusieurs bonnes réponses] Quelles instructions ajoutent un élément à la fin d'une liste Python ?",
     options: [
       { label: "liste.append(x)", isCorrect: true },
       { label: "liste.add(x)", isCorrect: false },
@@ -580,9 +739,19 @@ export const EXAMPLE_QUESTION_TEXT = buildQuestionText([
     ],
     durationSec: 60,
     points: 2,
+    explanation: "Plusieurs étoiles * : note partielle (bonnes cochées − mauvaises cochées).",
   },
   {
-    prompt: "Quelle valeur affiche l'algorithme suivant ?",
+    prompt: "[3/8 · Vrai / Faux] En pseudo-code, l'indice d'un tableau commence toujours à 1.",
+    options: [
+      { label: "Vrai", isCorrect: false },
+      { label: "Faux", isCorrect: true },
+    ],
+    type: "vf",
+    durationSec: 20,
+  },
+  {
+    prompt: "[4/8 · Trace d'algorithme] Quelle valeur affiche l'algorithme suivant ?",
     code: "s ← 0\nPour i ← 1 à 5 Faire\n    Si i Mod 2 = 0 Alors\n        s ← s + i\n    FinSi\nFinPour\nÉcrire(s)",
     codeLanguage: "PSEUDO_CODE",
     options: [
@@ -590,14 +759,58 @@ export const EXAMPLE_QUESTION_TEXT = buildQuestionText([
       { label: "9", isCorrect: false },
       { label: "15", isCorrect: false },
     ],
+    type: "trace",
     durationSec: 90,
     explanation: "Seuls 2 et 4 sont pairs : 2 + 4 = 6.",
   },
   {
-    prompt: "En pseudo-code, l'indice d'un tableau commence toujours à 1.",
+    prompt: "[5/8 · Recherche d'erreur] Quelle ligne empêche la boucle de se terminer ?",
+    code: "i ← 1\nTantQue i <= 5 Faire\n    Écrire(i)\nFinTantQue",
+    codeLanguage: "PSEUDO_CODE",
     options: [
-      { label: "Vrai", isCorrect: false },
-      { label: "Faux", isCorrect: true },
+      { label: "i ← 1", isCorrect: false },
+      { label: "TantQue i <= 5 Faire", isCorrect: false },
+      { label: "Il manque i ← i + 1 dans la boucle", isCorrect: true },
     ],
+    type: "erreur",
+    durationSec: 60,
+  },
+  {
+    prompt:
+      "[6/8 · Complexité] Quelle est la complexité de la recherche séquentielle dans un tableau de n éléments ?",
+    options: [
+      { label: "O(1)", isCorrect: false },
+      { label: "O(n)", isCorrect: true },
+      { label: "O(n²)", isCorrect: false },
+      { label: "O(log n)", isCorrect: false },
+    ],
+    type: "complexite",
+    durationSec: 45,
+  },
+  {
+    prompt:
+      "[7/8 · Algorithme à écrire, exécuté et corrigé automatiquement] Lire n puis afficher la somme 1 + … + n.",
+    options: [],
+    algo: {
+      solution:
+        'VARIABLES\n  n, i, s : ENTIER\nDEBUT\n  LIRE(n)\n  s <- 0\n  POUR i DE 1 A n FAIRE\n    s <- s + i\n  FINPOUR\n  ECRIRE("Somme = ", s)\nFIN',
+      tests: [{ inputs: ["5"] }, { inputs: ["0"] }],
+    },
+    durationSec: 600,
+    points: 6,
+    explanation: "Corrigé + jeux d'essai (TEST) : l'étudiant écrit et exécute son algorithme.",
+  },
+  {
+    prompt:
+      "[8/8 · Question directe / rédaction] Expliquez la différence entre une boucle POUR et une boucle TANT QUE.",
+    options: [],
+    algo: {
+      kind: "texte",
+      solution:
+        "POUR : nombre d'itérations connu à l'avance (compteur).\nTANT QUE : répète tant qu'une condition est vraie, nombre d'itérations inconnu.",
+      tests: [],
+    },
+    durationSec: 300,
+    points: 2,
   },
 ]);

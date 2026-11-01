@@ -4,6 +4,8 @@ import {
   ArrowRight,
   Check,
   CircleAlert,
+  Code2,
+  Info,
   Clock,
   ListChecks,
   LoaderCircle,
@@ -16,6 +18,7 @@ import {
   Wifi,
   WifiOff,
   X,
+  PenLine,
 } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -37,6 +40,7 @@ import { cn } from "@/lib/utils";
 import { CELL_CLASS } from "@/components/exam/progress-strip";
 import type { AttemptClientState, ClientSecurityEvent, HelpItem } from "../types";
 import { ApiError, attemptApi, initAttemptSession, isSessionElsewhere, NetworkError } from "./api";
+import { AlgoPlayground } from "@/features/algo/client/algo-playground";
 import { PracticeFeedbackCard } from "./practice-feedback";
 
 // ─── Plein écran (source externe → useSyncExternalStore) ─────────────────────
@@ -92,6 +96,22 @@ const formatClock = (ms: number) => {
 
 // ─── Composant ───────────────────────────────────────────────────────────────
 
+const codeBackupKey = (qid: string) => `agexam_exam_code_${qid}`;
+function readCodeBackup(qid: string): string | null {
+  try {
+    return typeof window === "undefined" ? null : localStorage.getItem(codeBackupKey(qid));
+  } catch {
+    return null;
+  }
+}
+function writeCodeBackup(qid: string, text: string) {
+  try {
+    localStorage.setItem(codeBackupKey(qid), text);
+  } catch {
+    /* stockage indisponible */
+  }
+}
+
 export function ExamRunner({ initialState }: { initialState: AttemptClientState }) {
   const router = useRouter();
   const [state, setState] = useState(initialState);
@@ -110,6 +130,26 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
     });
   }
   const selected = selection.ids;
+  /** Réponse libre : algorithme ou texte rédigé (même enregistrement, même correction). */
+  const isAlgo = question?.kind === "algo" || question?.kind === "texte";
+  const isText = question?.kind === "texte";
+
+  // Algorithme local (question d'algorithme), remis à zéro quand la question change.
+  const [codeDraft, setCodeDraft] = useState<{ qid: string | null; text: string }>({
+    qid: question?.attemptQuestionId ?? null,
+    text: question?.codeAnswer ?? "",
+  });
+  if ((question?.attemptQuestionId ?? null) !== codeDraft.qid) {
+    const id = question?.attemptQuestionId ?? null;
+    const server = question?.codeAnswer ?? "";
+    // Copie de secours locale : reprise si le serveur n'a rien reçu (coupure, onglet rechargé).
+    const local = id && question?.kind !== "choice" && question ? readCodeBackup(id) : null;
+    setCodeDraft({ qid: id, text: local && local.trim() && local !== server ? local : server });
+  }
+  const code = codeDraft.text;
+  const answered = isAlgo ? code.trim().length > 0 : selected.length > 0;
+  /** Validation d'un algorithme : confirmation demandée (définitive). */
+  const [confirmAlgo, setConfirmAlgo] = useState(false);
 
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">(
     question?.selectedOptionIds.length ? "saved" : "idle",
@@ -172,9 +212,9 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
   /** Clic de réponse : envoi groupé après une courte pause (plusieurs clics = une requête). */
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Sélection pas encore acceptée par le serveur (renvoyée à la reconnexion). */
-  const pendingSaveRef = useRef<{ qid: string; ids: string[] } | null>(null);
+  const pendingSaveRef = useRef<{ qid: string; ids: string[]; code?: string } | null>(null);
   /** Validation en attente pendant une coupure : renvoyée jusqu'au succès (idempotente). */
-  const pendingNextRef = useRef<{ qid: string; ids: string[] } | null>(null);
+  const pendingNextRef = useRef<{ qid: string; ids: string[]; code?: string } | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Chrono figé pendant la validation : le temps d'attente du réseau n'est pas affiché. */
   const [frozenMs, setFrozenMs] = useState<number | null>(null);
@@ -251,11 +291,14 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
   // ── Réponses ────────────────────────────────────────────────────────────────
 
   const save = useCallback(
-    async (qid: string, ids: string[]) => {
+    async (qid: string, ids: string[], code?: string) => {
       const seq = ++saveSeqRef.current;
-      pendingSaveRef.current = { qid, ids };
+      pendingSaveRef.current = { qid, ids, code };
       try {
-        const res = await attemptApi.answer(attemptId, qid, ids);
+        const res =
+          code !== undefined
+            ? await attemptApi.code(attemptId, qid, code)
+            : await attemptApi.answer(attemptId, qid, ids);
         if (seq !== saveSeqRef.current) return;
         pendingSaveRef.current = null;
         setSaveStatus(res.accepted ? "saved" : "idle");
@@ -295,6 +338,35 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
     [question, busy, selected, save],
   );
 
+  // Copie de secours reprise : renvoyée tout de suite au serveur.
+  const pushRestoredCode = useEffectEvent(() => {
+    if (!question || question.kind === "choice") return;
+    if (code.trim() && code !== (question.codeAnswer ?? "")) {
+      void save(question.attemptQuestionId, [], code);
+    }
+  });
+  useEffect(() => {
+    if (codeDraft.qid) pushRestoredCode();
+  }, [codeDraft.qid]);
+
+  /** Algorithme : enregistré 1,5 s après la dernière frappe. */
+  const editCode = useCallback(
+    (text: string) => {
+      if (!question || busy || question.kind === "choice") return;
+      const qid = question.attemptQuestionId;
+      setCodeDraft({ qid, text });
+      writeCodeBackup(qid, text);
+      setConfirmSkip(false);
+      setConfirmAlgo(false);
+      setConfirmFinish(false);
+      setSaveStatus("saving");
+      pendingSaveRef.current = { qid, ids: [], code: text };
+      cancelScheduledSave();
+      saveTimerRef.current = setTimeout(() => void save(qid, [], text), 1_500);
+    },
+    [question, busy, save],
+  );
+
   /** Envoie la validation en attente ; en cas de coupure, réessaie toutes les 2 s. */
   const sendNext = useCallback(
     async function run(): Promise<void> {
@@ -303,7 +375,7 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
       try {
-        const next = await attemptApi.next(attemptId, pending.qid, pending.ids);
+        const next = await attemptApi.next(attemptId, pending.qid, pending.ids, pending.code);
         pendingNextRef.current = null;
         applyState(next);
         setSaveStatus("idle");
@@ -331,17 +403,24 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
   const goNext = useCallback(
     async (force = false) => {
       if (!question || busy) return;
-      if (!force && selected.length === 0 && !confirmSkip) {
+      if (!force && !answered && !confirmSkip) {
         setConfirmSkip(true);
         return;
       }
+      // Algorithme : validation définitive, confirmée (vaut aussi remise si dernière question).
+      if (!force && isAlgo && answered && !confirmAlgo) {
+        setConfirmSkip(false);
+        setConfirmAlgo(true);
+        return;
+      }
       const last = question.number === state.total;
-      if (!force && last && !state.practice && !confirmFinish) {
+      if (!force && !isAlgo && last && !state.practice && !confirmFinish) {
         setConfirmSkip(false);
         setConfirmFinish(true);
         return;
       }
       setConfirmFinish(false);
+      setConfirmAlgo(false);
       setBusy(true);
       setFrozenMs(remainingMs);
       setConfirmSkip(false);
@@ -349,13 +428,21 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
       cancelScheduledSave();
       saveSeqRef.current++;
       pendingSaveRef.current = null;
-      pendingNextRef.current = { qid: question.attemptQuestionId, ids: selected };
+      pendingNextRef.current = {
+        qid: question.attemptQuestionId,
+        ids: isAlgo ? [] : selected,
+        code: isAlgo ? code : undefined,
+      };
       await sendNext();
     },
     [
       question,
       busy,
       selected,
+      isAlgo,
+      answered,
+      code,
+      confirmAlgo,
       confirmSkip,
       confirmFinish,
       state.total,
@@ -367,13 +454,15 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
 
   /** Retour du réseau : validation puis réponse en attente, puis état à jour. */
   const resumeAfterOutage = useEffectEvent(() => {
-    setOnline(true);
+    // « En ligne » seulement après une réponse du serveur (applyState) : sinon le
+    // chrono reprendrait avec l'ancienne échéance avant que le temps soit rendu.
     if (pendingNextRef.current) {
       void sendNext();
       return;
     }
     const pendingSave = pendingSaveRef.current;
-    if (pendingSave && !saveTimerRef.current) void save(pendingSave.qid, pendingSave.ids);
+    if (pendingSave && !saveTimerRef.current)
+      void save(pendingSave.qid, pendingSave.ids, pendingSave.code);
     void flushEvents();
   });
 
@@ -387,7 +476,23 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
 
   // ── Chrono de la question ───────────────────────────────────────────────────
 
-  const onTimeUp = useEffectEvent(() => {
+  const onTimeUp = useEffectEvent(async () => {
+    const qid = question?.attemptQuestionId;
+    // Le serveur fait foi : après une coupure, il a pu rendre du temps à la
+    // question (chrono en pause). On relit l'état avant de valider : aucune
+    // question n'est sautée à cause d'une échéance locale périmée.
+    try {
+      const fresh = await attemptApi.state(attemptId);
+      applyState(fresh);
+      const q = fresh.question;
+      if (!q || q.attemptQuestionId !== qid) return;
+      const left = Date.parse(q.expiresAt) - (Date.now() + offsetRef.current);
+      if (left > 1_000) return;
+    } catch (error) {
+      // Hors ligne : on reste sur la question, chrono figé.
+      handleError(error);
+      return;
+    }
     // Le serveur accepte encore quelques secondes : on envoie la sélection telle quelle.
     void goNext(true);
   });
@@ -701,10 +806,8 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
           role="alert"
         >
           Connexion perdue : le chrono est en pause et la question masquée. Vos réponses sont
-          gardées ; vous reprendrez avec le temps qui vous restait dès le retour du réseau
-          {state.settings.pauseLeftSec > 0
-            ? ` (jusqu'à ${Math.ceil(state.settings.pauseLeftSec / 60)} min de coupure au total).`
-            : "."}
+          gardées ; vous reprendrez sur cette même question, avec le temps qui vous restait, dès le
+          retour du réseau.
         </div>
       ) : null}
 
@@ -777,7 +880,12 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
         </div>
       ) : null}
 
-      <main className="relative mx-auto flex w-full max-w-[1120px] flex-1 flex-col gap-6 px-6 py-8">
+      <main
+        className={cn(
+          "relative mx-auto flex w-full flex-1 flex-col gap-6 px-6 py-8",
+          isAlgo ? "max-w-[1440px]" : "max-w-[1120px]",
+        )}
+      >
         {/* Progression (non cliquable) */}
         <div className="flex items-center gap-4">
           <div className="flex flex-1 gap-1" aria-hidden>
@@ -809,8 +917,20 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex flex-wrap gap-2">
                   <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-lilac px-3 text-[13px] font-semibold text-primary-strong">
-                    <ListChecks className="size-4" aria-hidden />
-                    {question.multiple ? "Plusieurs réponses possibles" : "Une seule réponse"}
+                    {isText ? (
+                      <PenLine className="size-4" aria-hidden />
+                    ) : isAlgo ? (
+                      <Code2 className="size-4" aria-hidden />
+                    ) : (
+                      <ListChecks className="size-4" aria-hidden />
+                    )}
+                    {isText
+                      ? "Réponse à rédiger"
+                      : isAlgo
+                        ? "Algorithme à écrire"
+                        : question.multiple
+                          ? "Plusieurs réponses possibles"
+                          : "Une seule réponse"}
                   </span>
                   <span className="inline-flex h-7 items-center rounded-full bg-neutral-bg px-3 text-[13px] font-semibold text-neutral">
                     {question.points} point{question.points > 1 ? "s" : ""}
@@ -848,7 +968,7 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
                 </h1>
               </div>
 
-              {question.code ? (
+              {question.code && (!isAlgo || isText) ? (
                 <div className="flex flex-col gap-2">
                   <div className="flex justify-end gap-1.5">
                     <Button
@@ -876,7 +996,51 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
                 </div>
               ) : null}
 
+              {isAlgo ? (
+                <p className="flex items-start gap-2 rounded-[12px] bg-lilac px-4 py-2.5 text-sm text-primary-strong">
+                  <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  {isText
+                    ? state.settings.algoValidation
+                      ? "Votre réponse sera corrigée après la remise : chaque élément juste rapporte des points. La note sera affichée une fois validée par votre formateur."
+                      : "Votre réponse sera corrigée automatiquement après la remise : chaque élément juste rapporte des points."
+                    : state.settings.algoValidation
+                      ? "Votre algorithme sera corrigé après la remise : chaque partie juste rapporte des points. La note sera affichée une fois validée par votre formateur."
+                      : "Votre algorithme sera corrigé automatiquement après la remise : chaque partie juste rapporte des points."}
+                </p>
+              ) : null}
+              {isText ? (
+                <div className="flex flex-col gap-1.5">
+                  <textarea
+                    value={code}
+                    onChange={(e) => editCode(e.target.value)}
+                    readOnly={busy || timeUp}
+                    rows={12}
+                    maxLength={20_000}
+                    spellCheck
+                    aria-label="Votre réponse"
+                    placeholder="Rédigez votre réponse ici…"
+                    onPaste={(e) => {
+                      if (state.settings.blockCopyPaste && !state.practice) e.preventDefault();
+                    }}
+                    className="min-h-[260px] w-full resize-y rounded-[14px] border border-line bg-surface px-4 py-3 text-[16px] leading-relaxed text-ink outline-none read-only:bg-canvas focus:border-primary focus:ring-4 focus:ring-primary/15"
+                  />
+                  <span className="self-end text-xs text-muted tabular-nums">
+                    {code.trim() ? code.trim().split(/\s+/).length : 0} mot
+                    {code.trim().split(/\s+/).length > 1 ? "s" : ""}
+                  </span>
+                </div>
+              ) : isAlgo ? (
+                <AlgoPlayground
+                  value={code}
+                  onChange={editCode}
+                  readOnly={busy || timeUp}
+                  blockPaste={state.settings.blockCopyPaste && !state.practice}
+                  minRows={14}
+                />
+              ) : null}
+
               <div
+                hidden={isAlgo}
                 className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-4"
                 role={question.multiple ? "group" : "radiogroup"}
                 aria-label="Réponses"
@@ -937,20 +1101,39 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
                     <span className="flex items-center gap-2 text-muted">
                       <LoaderCircle className="size-4 animate-spin" aria-hidden /> Enregistrement…
                     </span>
-                  ) : saveStatus === "saved" ? (
-                    <span className="flex items-center gap-2 text-success">
-                      <Check className="size-4" strokeWidth={3} aria-hidden /> Réponse enregistrée
+                  ) : confirmAlgo ? (
+                    <span className="text-warning">
+                      Validation définitive : votre {isText ? "réponse" : "algorithme"} ne sera plus
+                      modifiable
+                      {isLast ? " et votre copie sera remise." : "."}
                     </span>
-                  ) : saveStatus === "error" ? (
-                    <span className="flex items-center gap-2 text-danger">
-                      <CircleAlert className="size-4" aria-hidden /> Non enregistrée, nouvel essai à
-                      la reconnexion
-                    </span>
-                  ) : timeUp ? (
-                    <span className="text-muted">Temps écoulé…</span>
                   ) : confirmFinish ? (
                     <span className="text-warning">
                       Remise définitive : vous ne pourrez plus modifier vos réponses.
+                    </span>
+                  ) : saveStatus === "saved" ? (
+                    <span className="flex items-center gap-2 text-success">
+                      <Check className="size-4" strokeWidth={3} aria-hidden />{" "}
+                      {isText
+                        ? "Réponse enregistrée"
+                        : isAlgo
+                          ? "Algorithme enregistré"
+                          : "Réponse enregistrée"}
+                    </span>
+                  ) : saveStatus === "error" ? (
+                    <span className="flex items-center gap-2 text-danger">
+                      <CircleAlert className="size-4" aria-hidden />{" "}
+                      {isAlgo
+                        ? "Réponse pas encore enregistrée sur le serveur : gardez cette page ouverte, il sera envoyé à la validation."
+                        : "Non enregistrée, nouvel essai à la reconnexion"}
+                    </span>
+                  ) : timeUp ? (
+                    <span className="text-muted">Temps écoulé…</span>
+                  ) : isAlgo ? (
+                    <span className="font-normal text-muted">
+                      {isText
+                        ? "Enregistrement automatique · pas de retour en arrière"
+                        : "« Exécuter » pour tester · enregistrement automatique · pas de retour en arrière"}
                     </span>
                   ) : (
                     <span className="font-normal text-muted">
@@ -973,6 +1156,10 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
                     </>
                   ) : confirmSkip ? (
                     "Passer sans répondre ?"
+                  ) : confirmAlgo ? (
+                    <>
+                      Confirmer la validation <Check aria-hidden />
+                    </>
                   ) : confirmFinish ? (
                     <>
                       Confirmer la remise <Check aria-hidden />

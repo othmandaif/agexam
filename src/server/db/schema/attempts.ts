@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { AlgoGrading } from "@/domain/algo-grading";
 import { createdAt, id, tsz, updatedAt } from "./_shared";
 import { attemptQuestionStatusEnum, attemptStatusEnum } from "./enums";
 import { examQuestions, exams } from "./exams";
@@ -51,6 +52,8 @@ export const attempts = pgTable(
     /** Référence lisible du reçu de soumission, ex. A7F3-91C2. */
     receiptCode: text("receipt_code").unique(),
     flaggedForReview: boolean("flagged_for_review").notNull().default(false),
+    /** Copie rendue à l'étudiant par le formateur avant la publication générale. */
+    releasedAt: tsz("released_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -95,6 +98,10 @@ export const attemptQuestions = pgTable(
     pointsAwarded: numeric("points_awarded", { precision: 6, scale: 2, mode: "number" }),
     /** Sorties du mode examen pendant cette question (sanctions par question). */
     violationCount: integer("violation_count").notNull().default(0),
+    /** Question d'algorithme : code rendu par l'étudiant. */
+    codeAnswer: text("code_answer"),
+    /** Question d'algorithme : état et résultat de la correction automatique. */
+    grading: jsonb("grading").$type<AlgoGrading>(),
   },
   (t) => [
     uniqueIndex("attempt_questions_position_uq").on(t.attemptId, t.position),

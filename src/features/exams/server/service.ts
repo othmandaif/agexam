@@ -1,4 +1,5 @@
 import "server-only";
+import { groupScope, viewerOf } from "@/server/scope";
 import { and, asc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import { examPhase, canEditContent, publishProblems } from "@/domain/exam-lifecycle";
 import type { TimerMode } from "@/domain/enums";
@@ -9,6 +10,7 @@ import {
   summarize,
   type ParsedQuestion,
 } from "@/domain/question-text";
+import { freezeExpected } from "@/domain/agsyntax/testing";
 import { audit } from "@/server/audit";
 import { generateAccessCode } from "@/server/auth/access-code";
 import type { TenantUser } from "@/server/auth/session";
@@ -24,6 +26,7 @@ import {
   profiles,
   questionVersions,
   questions,
+  type AlgoQuestionData,
 } from "@/server/db/schema";
 import { AppError, errors } from "@/server/http/errors";
 import { assertCurrentYear } from "@/server/year";
@@ -69,12 +72,22 @@ async function assertModuleInTenant(moduleId: string, establishmentId: string) {
   if (!row) throw errors.badRequest("Module introuvable.");
 }
 
-async function assertGroupsInTenant(groupIds: string[], establishmentId: string) {
+async function assertGroupsInTenant(
+  groupIds: string[],
+  establishmentId: string,
+  viewerId: string | null,
+) {
   if (groupIds.length === 0) return;
   const rows = await getDb()
     .select({ id: groups.id })
     .from(groups)
-    .where(and(inArray(groups.id, groupIds), eq(groups.establishmentId, establishmentId)));
+    .where(
+      and(
+        inArray(groups.id, groupIds),
+        eq(groups.establishmentId, establishmentId),
+        groupScope(viewerId),
+      ),
+    );
   if (rows.length !== new Set(groupIds).size) throw errors.badRequest("Groupe introuvable.");
 }
 
@@ -83,6 +96,31 @@ async function assertGroupsInTenant(groupIds: string[], establishmentId: string)
  * Les questions créées par CET examen et utilisées nulle part ailleurs sont supprimées ;
  * celles partagées (examen dupliqué) sont conservées.
  */
+/**
+ * Question d'algorithme : le corrigé est exécuté sur chaque jeu d'essai et
+ * les sorties attendues sont figées. Refusé si le corrigé échoue.
+ */
+function frozenAlgo(q: ParsedQuestion): AlgoQuestionData {
+  const algo = q.algo!;
+  // Réponse rédigée : la réponse attendue sert directement à la correction.
+  if (algo.kind === "texte") return { kind: "texte", solution: algo.solution, tests: [] };
+  const r = freezeExpected(
+    algo.solution,
+    algo.tests.map((t) => ({ inputs: t.inputs, hidden: true })),
+  );
+  if (!r.ok) {
+    throw errors.badRequest(
+      `Question ${q.number} : le corrigé échoue sur le jeu d'essai ${r.index + 1}${
+        r.error.line ? ` (ligne ${r.error.line})` : ""
+      } : ${r.error.message}`,
+    );
+  }
+  return {
+    solution: algo.solution,
+    tests: r.tests.map((t) => ({ inputs: t.inputs, expected: t.expected })),
+  };
+}
+
 async function replaceQuestions(
   tx: Tx,
   examId: string,
@@ -169,6 +207,7 @@ async function replaceQuestions(
         explanation: q.explanation,
         defaultPoints: q.points,
         fingerprint,
+        algo: q.algo ? frozenAlgo(q) : null,
         // Identifiants d'options aléatoires : ils ne trahissent pas l'ordre d'origine.
         options: q.options.map((o) => ({
           id: crypto.randomUUID().slice(0, 8),
@@ -252,7 +291,7 @@ export async function saveExam(
     throw errors.badRequest(`${MAX_QUESTIONS_PER_EXAM} questions maximum par examen.`);
   }
   await assertModuleInTenant(input.moduleId, actor.establishmentId);
-  await assertGroupsInTenant(input.groupIds, actor.establishmentId);
+  await assertGroupsInTenant(input.groupIds, actor.establishmentId, viewerOf(actor));
   await assertStudentsInTenant(input.candidateIds, actor.establishmentId);
 
   const existing = input.examId ? await getEditableExam(actor, input.examId) : null;
@@ -306,6 +345,7 @@ export async function saveExam(
       ...(existing?.securitySettings ?? DEFAULT_SECURITY_SETTINGS),
       shuffleAnswers: input.settings.shuffleAnswers,
       blockCopyPaste: input.settings.blockCopyPaste,
+      validateAlgoGrades: input.settings.validateAlgoGrades,
     },
   };
 

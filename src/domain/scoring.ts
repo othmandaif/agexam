@@ -5,6 +5,13 @@ export interface QuestionScoreInput {
   selectedOptionIds: readonly string[];
   correctOptionIds: readonly string[];
   points: number;
+  /** Nombre total de choix de la question (pour la note partielle). */
+  optionCount?: number;
+  /**
+   * Question notée hors QCM (algorithme) : part des points obtenue (0 à 1),
+   * null tant que la correction est en attente (0 point provisoire).
+   */
+  ratio?: number | null;
 }
 
 export interface QuestionScore {
@@ -24,6 +31,31 @@ export function isExactMatch(selected: readonly string[], correct: readonly stri
   return true;
 }
 
+/**
+ * Part des points d'une question à plusieurs bonnes réponses :
+ * bonnes cochées / total des bonnes − fausses cochées / total des fausses,
+ * jamais négative. Tout cocher donne donc 0, et chaque erreur se paie.
+ * Exemple (2 bonnes sur 3 choix) : 1 bonne → 50 %, 1 bonne + 1 fausse → 0 %.
+ */
+export function partialCredit(
+  selected: readonly string[],
+  correct: readonly string[],
+  optionCount: number,
+): number {
+  const good = new Set(correct);
+  const chosen = new Set(selected);
+  if (good.size === 0 || chosen.size === 0) return 0;
+  let goodHits = 0;
+  let badHits = 0;
+  for (const id of chosen) {
+    if (good.has(id)) goodHits++;
+    else badHits++;
+  }
+  const badTotal = Math.max(0, optionCount - good.size);
+  const fraction = goodHits / good.size - (badTotal > 0 ? badHits / badTotal : badHits > 0 ? 1 : 0);
+  return Math.max(0, Math.min(1, fraction));
+}
+
 export function scoreQuestion(input: QuestionScoreInput): QuestionScore {
   if (input.status === "NEUTRALISEE") {
     return { counted: false, awarded: 0, max: 0, isCorrect: null };
@@ -31,7 +63,22 @@ export function scoreQuestion(input: QuestionScoreInput): QuestionScore {
   if (input.status === "INVALIDEE") {
     return { counted: true, awarded: 0, max: input.points, isCorrect: false };
   }
+  if (input.ratio !== undefined) {
+    const r = Math.max(0, Math.min(1, input.ratio ?? 0));
+    const awarded = Math.round(input.points * r * 100) / 100;
+    return { counted: true, awarded, max: input.points, isCorrect: r >= 1 };
+  }
   const isCorrect = isExactMatch(input.selectedOptionIds, input.correctOptionIds);
+  // Une seule bonne réponse : tout ou rien. Plusieurs : note partielle.
+  if (input.correctOptionIds.length > 1 && !isCorrect) {
+    const fraction = partialCredit(
+      input.selectedOptionIds,
+      input.correctOptionIds,
+      input.optionCount ?? input.correctOptionIds.length,
+    );
+    const awarded = Math.round(input.points * fraction * 100) / 100;
+    return { counted: true, awarded, max: input.points, isCorrect: false };
+  }
   return { counted: true, awarded: isCorrect ? input.points : 0, max: input.points, isCorrect };
 }
 

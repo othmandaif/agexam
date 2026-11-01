@@ -61,3 +61,13 @@ export function fmtSeconds(sec: number | null): string {
 }
 
 export const fmtPercent = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)} %`);
+
+/** Verdict global de la correction d'un algorithme. */
+export const VERDICT_LABEL = {
+  correct: "Algorithme entièrement juste",
+  presque: "Presque juste (petite erreur)",
+  partiel: "Partiellement juste",
+  insuffisant: "Insuffisant (démarche à peine amorcée)",
+  hors_sujet: "Hors sujet",
+  vide: "Copie vide",
+} as const;

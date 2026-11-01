@@ -8,6 +8,7 @@ import { paths, ROUTES } from "@/lib/routes";
 import { actionError } from "@/server/actions/result";
 import { audit } from "@/server/audit";
 import { requireTenant } from "@/server/auth/session";
+import { groupScope, studentScope, viewerOf } from "@/server/scope";
 import { assertCurrentYear } from "@/server/year";
 import { getDb } from "@/server/db/client";
 import { examGroups, groupMembers, groups, profiles } from "@/server/db/schema";
@@ -25,11 +26,21 @@ type State = ActionState<unknown>;
 const STAFF = ["FORMATEUR", "ADMIN"] as const;
 
 /** Groupe de l'établissement, modifiable seulement s'il est de l'année courante. */
-async function assertGroupInTenant(groupId: string, establishmentId: string) {
+async function assertGroupInTenant(
+  groupId: string,
+  establishmentId: string,
+  viewerId: string | null,
+) {
   const [row] = await getDb()
     .select({ id: groups.id, name: groups.name, academicYear: groups.academicYear })
     .from(groups)
-    .where(and(eq(groups.id, groupId), eq(groups.establishmentId, establishmentId)))
+    .where(
+      and(
+        eq(groups.id, groupId),
+        eq(groups.establishmentId, establishmentId),
+        groupScope(viewerId),
+      ),
+    )
     .limit(1);
   if (!row) throw errors.notFound("Groupe introuvable.");
   assertCurrentYear(row.academicYear, "Ce groupe");
@@ -38,11 +49,11 @@ async function assertGroupInTenant(groupId: string, establishmentId: string) {
 
 export async function createGroupAction(_prev: State, formData: FormData): Promise<State> {
   try {
-    const user = await requireTenant("ADMIN");
+    const user = await requireTenant("FORMATEUR");
     const input = groupSchema.parse(Object.fromEntries(formData));
     await getDb()
       .insert(groups)
-      .values({ ...input, establishmentId: user.establishmentId });
+      .values({ ...input, establishmentId: user.establishmentId, ownerId: user.id });
     revalidatePath(ROUTES.trainer.groups);
     return { status: "success", message: `Groupe ${input.name} créé.` };
   } catch (error) {
@@ -52,9 +63,9 @@ export async function createGroupAction(_prev: State, formData: FormData): Promi
 
 export async function updateGroupAction(_prev: State, formData: FormData): Promise<State> {
   try {
-    const user = await requireTenant("ADMIN");
+    const user = await requireTenant("FORMATEUR");
     const { groupId, ...input } = groupUpdateSchema.parse(Object.fromEntries(formData));
-    await assertGroupInTenant(groupId, user.establishmentId);
+    await assertGroupInTenant(groupId, user.establishmentId, viewerOf(user));
     const updated = await getDb()
       .update(groups)
       .set(input)
@@ -71,9 +82,9 @@ export async function updateGroupAction(_prev: State, formData: FormData): Promi
 /** Refusée si le groupe est affecté à un examen : les étudiants perdraient l'accès sans prévenir. */
 export async function deleteGroupAction(_prev: State, formData: FormData): Promise<State> {
   try {
-    const user = await requireTenant("ADMIN");
+    const user = await requireTenant("FORMATEUR");
     const { groupId } = groupIdSchema.parse(Object.fromEntries(formData));
-    const group = await assertGroupInTenant(groupId, user.establishmentId);
+    const group = await assertGroupInTenant(groupId, user.establishmentId, viewerOf(user));
     const db = getDb();
     const examCount = await db.$count(examGroups, eq(examGroups.groupId, groupId));
     if (examCount > 0) {
@@ -104,7 +115,7 @@ export async function addMembersAction(_prev: State, formData: FormData): Promis
       groupId: formData.get("groupId"),
       profileIds: formData.getAll("profileId"),
     });
-    await assertGroupInTenant(groupId, user.establishmentId);
+    await assertGroupInTenant(groupId, user.establishmentId, viewerOf(user));
 
     const db = getDb();
     // Seuls les étudiants du même établissement peuvent être ajoutés.
@@ -116,6 +127,7 @@ export async function addMembersAction(_prev: State, formData: FormData): Promis
           inArray(profiles.id, profileIds),
           eq(profiles.establishmentId, user.establishmentId),
           eq(profiles.role, "ETUDIANT"),
+          studentScope(viewerOf(user), "profiles"),
         ),
       );
     if (students.length === 0) throw errors.badRequest("Aucun étudiant valide sélectionné.");
@@ -138,7 +150,7 @@ export async function removeMemberAction(_prev: State, formData: FormData): Prom
   try {
     const user = await requireTenant(...STAFF);
     const { groupId, profileId } = memberSchema.parse(Object.fromEntries(formData));
-    await assertGroupInTenant(groupId, user.establishmentId);
+    await assertGroupInTenant(groupId, user.establishmentId, viewerOf(user));
     await getDb()
       .delete(groupMembers)
       .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.profileId, profileId)));

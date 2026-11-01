@@ -1,8 +1,11 @@
+import { InlineAction } from "@/components/ui/inline-action";
+import { deleteStudentAction } from "@/features/accounts/server/actions";
 import {
   ChevronRight,
   Download,
   FileSpreadsheet,
   GraduationCap,
+  Trash2,
   Upload,
   UserRound,
 } from "lucide-react";
@@ -23,6 +26,7 @@ import { paths, ROUTES } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
 import { currentAcademicYear } from "@/domain/academic-year";
 import { getViewYear } from "@/server/year";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Étudiants" };
 
@@ -41,11 +45,11 @@ export default async function StudentsPage({
   const groupId = uuid.test(one(sp.groupe)) ? one(sp.groupe) : null;
   const year = await getViewYear();
   const pastYear = year !== currentAcademicYear();
-  const filters = { role: "ETUDIANT" as const, q, groupId, year };
+  const filters = { role: "ETUDIANT" as const, q, groupId, year, viewerId: viewerOf(user) };
   let pg = parsePageParams({ page: one(sp.page), taille: one(sp.taille) });
   const [first, groups] = await Promise.all([
     listAccounts(user.establishmentId, filters, { offset: pg.offset, limit: pg.size }),
-    listGroupOptions(user.establishmentId, year),
+    listGroupOptions(user.establishmentId, year, viewerOf(user)),
   ]);
   let { rows, total } = first;
   const clamped = clampPage(pg, total);
@@ -141,13 +145,26 @@ export default async function StudentsPage({
                         )}
                       </Td>
                       <Td className="text-right">
-                        <Link
-                          href={paths.studentReport(s.id)}
-                          className="inline-flex items-center gap-1 font-bold whitespace-nowrap no-underline"
-                          aria-label={`Fiche de ${s.fullName}`}
-                        >
-                          Fiche <ChevronRight className="size-4" aria-hidden />
-                        </Link>
+                        <div className="flex items-center justify-end gap-3">
+                          {user.role === "FORMATEUR" ? (
+                            <InlineAction
+                              action={deleteStudentAction}
+                              fields={{ userId: s.id }}
+                              variant="danger"
+                              size="sm"
+                              label={<Trash2 aria-hidden />}
+                              aria-label={`Supprimer ${s.fullName}`}
+                              confirmMessage={`Supprimer définitivement ${s.fullName} ? Son compte, ses copies et ses résultats seront effacés.`}
+                            />
+                          ) : null}
+                          <Link
+                            href={paths.studentReport(s.id)}
+                            className="inline-flex items-center gap-1 font-bold whitespace-nowrap no-underline"
+                            aria-label={`Fiche de ${s.fullName}`}
+                          >
+                            Fiche <ChevronRight className="size-4" aria-hidden />
+                          </Link>
+                        </div>
                       </Td>
                     </tr>
                   ))}

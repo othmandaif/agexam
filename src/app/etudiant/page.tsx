@@ -147,7 +147,11 @@ export default async function StudentHomePage() {
                           {a.scoreOutOf20 >= PASS_MARK ? "Réussi" : "Non réussi"}
                         </Badge>
                       ) : (
-                        <span className="text-[12px] text-muted">Note pas encore publiée</span>
+                        <span className="text-[12px] text-muted">
+                          {a.awaiting
+                            ? "Résultat disponible ultérieurement"
+                            : "Note pas encore publiée"}
+                        </span>
                       )}
                     </span>
                     <ChevronRight className="size-4 text-faint" aria-hidden />

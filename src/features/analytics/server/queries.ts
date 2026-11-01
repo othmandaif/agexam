@@ -1,4 +1,5 @@
 import "server-only";
+import { studentScope, viewerOf } from "@/server/scope";
 import { sql, type SQL } from "drizzle-orm";
 import {
   groupCopies,
@@ -402,6 +403,7 @@ export async function getStudentReport(
          join groups g on g.id = gm.group_id where gm.profile_id = p.id) as groups
     from profiles p
     where p.id = ${studentId} and p.establishment_id = ${user.establishmentId} and p.role = 'ETUDIANT'
+      and ${studentScope(viewerOf(user)) ?? sql`true`}
   `)) as unknown as { id: string; full_name: string; email: string; groups: string | null }[];
   if (!student) return null;
 

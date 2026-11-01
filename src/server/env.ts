@@ -11,6 +11,10 @@ const serverSchema = z.object({
   DATABASE_PREPARE: z.enum(["true", "false"]).optional(),
   /** Clé secrète Supabase (sb_secret_… ou service_role). Serveur uniquement. */
   SUPABASE_SECRET_KEY: z.string().min(1).optional(),
+  /** Correction automatique des algorithmes (relecture du code). Serveur uniquement. */
+  DEEPSEEK_API_KEY: z.string().min(1).optional(),
+  DEEPSEEK_MODEL: z.string().min(1).default("deepseek-chat"),
+  DEEPSEEK_BASE_URL: z.url().default("https://api.deepseek.com"),
 });
 
 export type ServerEnv = z.infer<typeof serverSchema>;

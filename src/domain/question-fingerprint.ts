@@ -6,6 +6,11 @@ export interface FingerprintInput {
   codeLanguage: CodeLanguage | null;
   explanation: string | null;
   options: readonly { label: string; isCorrect: boolean; fixedPosition?: boolean }[];
+  algo?: {
+    kind?: "algo" | "texte";
+    solution: string;
+    tests: readonly { inputs: readonly string[] }[];
+  } | null;
 }
 
 /** Séparateur ASCII « unit separator » : n'apparaît jamais dans un texte saisi. */
@@ -26,5 +31,13 @@ export function canonicalQuestion(q: FingerprintInput): string {
     q.codeLanguage ?? "",
     q.explanation ?? "",
     ...q.options.map((o) => `${o.isCorrect ? "1" : "0"}${o.fixedPosition ? "1" : "0"}${o.label}`),
+    // Question d'algorithme seulement : les empreintes existantes ne changent pas.
+    ...(q.algo
+      ? [
+          q.algo.kind === "texte" ? "TEXTE" : "ALGO",
+          q.algo.solution,
+          ...q.algo.tests.map((t) => t.inputs.join("\u001e")),
+        ]
+      : []),
   ].join(SEP);
 }

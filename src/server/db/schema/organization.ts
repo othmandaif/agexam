@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -45,10 +46,17 @@ export const profiles = pgTable(
     academicYear: text("academic_year")
       .notNull()
       .default(sql`public.academic_year_of(now())`),
+    /** Formateur qui a créé le compte étudiant (null : compte historique, visible de tous). */
+    createdBy: uuid("created_by").references((): AnyPgColumn => profiles.id, {
+      onDelete: "set null",
+    }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("profiles_establishment_idx").on(t.establishmentId, t.role)],
+  (t) => [
+    index("profiles_establishment_idx").on(t.establishmentId, t.role),
+    index("profiles_created_by_idx").on(t.createdBy),
+  ],
 );
 
 /** Module de formation, ex. « M104 · Algorithmique ». */
@@ -95,10 +103,15 @@ export const groups = pgTable(
     academicYear: text("academic_year")
       .notNull()
       .default(sql`public.academic_year_of(now())`),
+    /** Formateur propriétaire (null : groupe historique, visible de tous les formateurs). */
+    ownerId: uuid("owner_id").references(() => profiles.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("groups_name_year_uq").on(t.establishmentId, t.academicYear, t.name)],
+  (t) => [
+    uniqueIndex("groups_name_year_uq").on(t.establishmentId, t.academicYear, t.name),
+    index("groups_owner_idx").on(t.ownerId),
+  ],
 );
 
 export const groupMembers = pgTable(

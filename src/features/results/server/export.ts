@@ -1,12 +1,18 @@
 import "server-only";
 import ExcelJS from "exceljs";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { formatDateTime } from "@/lib/datetime";
 import { getDb } from "@/server/db/client";
 import { attemptQuestions, examQuestions } from "@/server/db/schema";
 import { RELEASE_LABELS, VISIBILITY_LABELS } from "@/features/exams/schemas";
 import { RESULT_STATUS_LABELS, SIGNAL_LABELS } from "../labels";
 import type { ExamResults, ResultStudent } from "../types";
+
+/** Sélection, ou un marqueur si un algorithme a été rendu (question d'algorithme). */
+const answeredSql = sql<
+  string[]
+>`case when coalesce(btrim(${attemptQuestions.codeAnswer}), '') <> ''
+  then '["code"]'::jsonb else ${attemptQuestions.selectedOptionIds} end`;
 import { officialLogo, type ExportMeta } from "./export-meta";
 
 const BRAND = "FF4255FF";
@@ -182,7 +188,7 @@ export async function buildResultsWorkbook(results: ExamResults): Promise<Buffer
         number: examQuestions.position,
         status: attemptQuestions.status,
         isCorrect: attemptQuestions.isCorrect,
-        selected: attemptQuestions.selectedOptionIds,
+        selected: answeredSql,
       })
       .from(attemptQuestions)
       .innerJoin(examQuestions, eq(examQuestions.id, attemptQuestions.examQuestionId))
@@ -242,7 +248,7 @@ async function loadGridCells(results: ExamResults) {
       position: examQuestions.position,
       status: attemptQuestions.status,
       isCorrect: attemptQuestions.isCorrect,
-      selected: attemptQuestions.selectedOptionIds,
+      selected: answeredSql,
     })
     .from(attemptQuestions)
     .innerJoin(examQuestions, eq(examQuestions.id, attemptQuestions.examQuestionId))

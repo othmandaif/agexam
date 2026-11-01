@@ -1,3 +1,4 @@
+import type { AlgoGrading } from "@/domain/algo-grading";
 import type {
   AttemptQuestionStatus,
   AttemptStatus,
@@ -32,6 +33,10 @@ export interface ResultStudent {
   receiptCode: string | null;
   /** Rang dans la classe (copies notées), 1 = meilleure note. */
   rank: number | null;
+  /** Questions d'algorithme rendues dont la note n'est pas encore définitive. */
+  algoToReview: number;
+  /** Copie rendue individuellement à l'étudiant. */
+  released: boolean;
 }
 
 export interface ResultOption {
@@ -50,10 +55,24 @@ export interface ResultQuestion {
   codeLanguage: CodeLanguage | null;
   options: ResultOption[];
   multiple: boolean;
+  /** Question d'algorithme : pas de clé à corriger, réussite fixée par la correction. */
+  isAlgo: boolean;
   points: number;
   durationSec: number;
   neutralized: boolean;
   analysis: QuestionAnalysis;
+  /** Algorithme : code rendu et correction de chaque copie. */
+  algoCopies?: AlgoCopyAnswer[];
+  /** Type de réponse libre : algorithme ou texte rédigé. */
+  algoKind?: "algo" | "texte";
+}
+
+export interface AlgoCopyAnswer {
+  attemptId: string;
+  fullName: string;
+  code: string;
+  pointsAwarded: number | null;
+  grading: AlgoGrading | null;
 }
 
 export interface ExamResults {
@@ -80,6 +99,8 @@ export interface ExamResults {
     flagged: number;
     /** Durée moyenne des copies rendues (secondes). */
     avgDurationSec: number | null;
+    /** Copies avec un algorithme à valider / noter par le formateur. */
+    algoToReview: { attemptId: string; fullName: string; count: number }[];
   };
   histogram: HistogramBin[];
   students: ResultStudent[];
@@ -107,6 +128,13 @@ export interface CopyQuestion {
   durationSec: number;
   timeSpentSec: number | null;
   explanation: string | null;
+  /** Question d'algorithme : code rendu, correction, corrigé (vue formateur). */
+  algo: {
+    kind: "algo" | "texte";
+    code: string | null;
+    grading: AlgoGrading | null;
+    solution: string;
+  } | null;
 }
 
 export interface StudentCopy {
@@ -125,5 +153,9 @@ export interface StudentCopy {
   violationCount: number;
   neutralizations: number;
   flagged: boolean;
+  /** Copie rendue individuellement à l'étudiant. */
+  released: boolean;
+  /** Réponses libres (algorithme / rédaction) dont la note reste à valider. */
+  toValidate: number;
   questions: CopyQuestion[];
 }

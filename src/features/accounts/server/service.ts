@@ -8,6 +8,7 @@ import { generateTempPassword } from "@/server/auth/temp-password";
 import { getDb } from "@/server/db/client";
 import { groupMembers, groups, profiles } from "@/server/db/schema";
 import { AppError, errors } from "@/server/http/errors";
+import { groupScope, viewerOf } from "@/server/scope";
 import { supabaseAdmin } from "@/server/supabase/admin";
 
 /** Durée de blocage Supabase pour un compte désactivé (≈ 100 ans). */
@@ -36,7 +37,7 @@ function isEmailTaken(error: { code?: string; status?: number; message?: string 
 }
 
 /** Groupe de l'établissement ET de l'année courante (on n'inscrit pas dans le passé). */
-async function assertGroupInTenant(groupId: string, establishmentId: string) {
+async function assertGroupInTenant(groupId: string, establishmentId: string, viewerId: string | null) {
   const [row] = await getDb()
     .select({ id: groups.id })
     .from(groups)
@@ -45,6 +46,7 @@ async function assertGroupInTenant(groupId: string, establishmentId: string) {
         eq(groups.id, groupId),
         eq(groups.establishmentId, establishmentId),
         eq(groups.academicYear, currentAcademicYear()),
+        groupScope(viewerId),
       ),
     )
     .limit(1);
@@ -96,6 +98,7 @@ async function reactivateStudent(
         academicYear: year,
         isActive: true,
         mustChangePassword: true,
+        ...(viewerOf(actor) ? { createdBy: actor.id } : {}),
       })
       .where(eq(profiles.id, found.id));
     if (input.groupId) {
@@ -131,7 +134,9 @@ export async function assertAccountInTenant(userId: string, establishmentId: str
  * puis complète le profil. En cas d'échec côté base, le compte Auth est supprimé.
  */
 export async function createAccount(actor: TenantUser, input: NewAccount): Promise<CreatedAccount> {
-  if (input.groupId) await assertGroupInTenant(input.groupId, actor.establishmentId);
+  if (input.groupId) {
+    await assertGroupInTenant(input.groupId, actor.establishmentId, viewerOf(actor));
+  }
 
   const tempPassword = generateTempPassword();
   const admin = supabaseAdmin();
@@ -165,6 +170,7 @@ export async function createAccount(actor: TenantUser, input: NewAccount): Promi
           role: input.role,
           establishmentId: actor.establishmentId,
           mustChangePassword: true,
+          createdBy: input.role === "ETUDIANT" ? viewerOf(actor) : null,
         })
         .onConflictDoUpdate({
           target: profiles.id,
@@ -173,6 +179,7 @@ export async function createAccount(actor: TenantUser, input: NewAccount): Promi
             role: input.role,
             establishmentId: actor.establishmentId,
             mustChangePassword: true,
+            createdBy: input.role === "ETUDIANT" ? viewerOf(actor) : null,
           },
         });
       if (input.groupId) {

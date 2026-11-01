@@ -10,6 +10,13 @@ import {
 } from "drizzle-orm/pg-core";
 import type { QuestionOption } from "@/domain/exam-settings";
 import { createdAt, id, tsz, updatedAt } from "./_shared";
+
+export interface AlgoQuestionData {
+  /** « texte » : question directe / rédaction (réponse attendue dans `solution`, pas de jeux). */
+  kind?: "algo" | "texte";
+  solution: string;
+  tests: { inputs: string[]; expected: string }[];
+}
 import { codeLanguageEnum, difficultyEnum, questionTypeEnum } from "./enums";
 import { chapters, establishments, modules, profiles } from "./organization";
 
@@ -70,6 +77,8 @@ export const questionVersions = pgTable(
     codeLanguage: codeLanguageEnum("code_language"),
     options: jsonb("options").$type<QuestionOption[]>().notNull(),
     explanation: text("explanation"),
+    /** Question d'algorithme : corrigé et jeux d'essai figés (jamais envoyés au navigateur). */
+    algo: jsonb("algo").$type<AlgoQuestionData>(),
     defaultPoints: numeric("default_points", { precision: 6, scale: 2, mode: "number" })
       .notNull()
       .default(1),

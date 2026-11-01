@@ -1,12 +1,15 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { ActionState } from "@/lib/action-state";
 import { homePathFor, paths, ROUTES } from "@/lib/routes";
 import { actionError } from "@/server/actions/result";
 import { requireTenant, requireUser } from "@/server/auth/session";
+import { studentScope } from "@/server/scope";
+import { audit } from "@/server/audit";
+import { supabaseAdmin } from "@/server/supabase/admin";
 import { getDb } from "@/server/db/client";
 import { profiles } from "@/server/db/schema";
 import { AppError } from "@/server/http/errors";
@@ -37,11 +40,11 @@ export interface Credentials {
 type State = ActionState<unknown>;
 
 /** Un formateur n'agit que sur les comptes étudiants de son établissement. */
-async function assertStudentOfTenant(userId: string, establishmentId: string) {
+async function assertStudentOfTenant(userId: string, establishmentId: string, viewerId: string) {
   const [row] = await getDb()
     .select({ role: profiles.role, establishmentId: profiles.establishmentId })
     .from(profiles)
-    .where(eq(profiles.id, userId))
+    .where(and(eq(profiles.id, userId), studentScope(viewerId, "profiles")))
     .limit(1);
   if (!row || row.establishmentId !== establishmentId || row.role !== "ETUDIANT") {
     throw new AppError("FORBIDDEN", "Action réservée aux comptes étudiants.");
@@ -57,6 +60,9 @@ export async function createAccountAction(
     const actor = await requireTenant("ADMIN", "FORMATEUR");
     const parsed = createAccountSchema.parse(Object.fromEntries(formData));
     // Un formateur ne crée que des comptes étudiants, dans un groupe existant de l'année.
+    if (actor.role === "ADMIN" && parsed.role === "ETUDIANT") {
+      throw new AppError("FORBIDDEN", "Les étudiants sont créés par les formateurs.");
+    }
     const input = actor.role === "ADMIN" ? parsed : { ...parsed, role: "ETUDIANT" as const };
     if (actor.role !== "ADMIN" && !input.groupId) {
       throw new AppError("BAD_REQUEST", "Choisissez le groupe de l'étudiant.");
@@ -71,6 +77,30 @@ export async function createAccountAction(
         : `Compte créé pour ${input.fullName}.`,
       data: { userId, fullName: input.fullName, email: input.email, tempPassword },
     };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+/** Supprime définitivement un étudiant du formateur (compte, copies et résultats compris). */
+export async function deleteStudentAction(_prev: State, formData: FormData): Promise<State> {
+  try {
+    const actor = await requireTenant("FORMATEUR");
+    const { userId } = userIdSchema.parse(Object.fromEntries(formData));
+    await assertStudentOfTenant(userId, actor.establishmentId, actor.id);
+    const { error } = await supabaseAdmin().auth.admin.deleteUser(userId);
+    if (error) throw new AppError("INTERNAL", "Suppression impossible. Réessayez.");
+    await getDb().transaction((tx) =>
+      audit(tx, {
+        actorId: actor.id,
+        action: "account.delete",
+        entityType: "profile",
+        entityId: userId,
+        payload: {},
+      }),
+    );
+    revalidatePath(ROUTES.trainer.students);
+    return { status: "success", message: "Étudiant supprimé." };
   } catch (error) {
     return actionError(error);
   }
@@ -120,7 +150,9 @@ export async function resetPasswordAction(
   try {
     const actor = await requireTenant("ADMIN", "FORMATEUR");
     const { userId } = userIdSchema.parse(Object.fromEntries(formData));
-    if (actor.role !== "ADMIN") await assertStudentOfTenant(userId, actor.establishmentId);
+    if (actor.role !== "ADMIN") {
+      await assertStudentOfTenant(userId, actor.establishmentId, actor.id);
+    }
     const tempPassword = await resetAccountPassword(actor, userId);
     revalidatePath(paths.account(userId));
     return {

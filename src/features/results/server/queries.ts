@@ -1,5 +1,6 @@
 import "server-only";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import type { AlgoGrading } from "@/domain/algo-grading";
 import { isMultipleAnswer } from "@/domain/attempt-rules";
 import type { AttemptQuestionStatus, AttemptStatus } from "@/domain/enums";
 import { examPhase } from "@/domain/exam-lifecycle";
@@ -47,6 +48,8 @@ interface StudentRow {
   correct: number | null;
   answered: number | null;
   total: number | null;
+  algo_to_review: number | null;
+  released_at: string | null;
 }
 
 const iso = (v: string | Date | null) => (v ? new Date(v).toISOString() : null);
@@ -75,10 +78,16 @@ export async function getExamResults(examId: string): Promise<ExamResults | null
           where gm3.profile_id = p.id)
       ) as group_names,
       a.id as attempt_id, a.status, a.score_out_of_20, a.score_awarded, a.score_max,
-      a.violation_count, a.flagged_for_review, a.started_at, a.submitted_at, a.receipt_code,
+      a.violation_count, a.flagged_for_review, a.released_at, a.started_at, a.submitted_at, a.receipt_code,
       (select count(*)::int from ${attemptQuestions} aq where aq.attempt_id = a.id and aq.is_correct) as correct,
       (select count(*)::int from ${attemptQuestions} aq
-        where aq.attempt_id = a.id and jsonb_array_length(aq.selected_option_ids) > 0) as answered,
+        where aq.attempt_id = a.id
+          and (jsonb_array_length(aq.selected_option_ids) > 0
+               or coalesce(btrim(aq.code_answer), '') <> '')) as answered,
+      (select count(*)::int from ${attemptQuestions} aq
+        where aq.attempt_id = a.id and aq.status <> 'INVALIDEE'
+          and coalesce(btrim(aq.code_answer), '') <> ''
+          and coalesce(aq.grading->>'status', '') <> 'done') as algo_to_review,
       (select count(*)::int from ${attemptQuestions} aq
          join ${examQuestions} eq on eq.id = aq.exam_question_id
         where aq.attempt_id = a.id and aq.status <> 'NEUTRALISEE' and eq.neutralized_at is null) as total
@@ -120,6 +129,8 @@ export async function getExamResults(examId: string): Promise<ExamResults | null
           : null,
       receiptCode: r.receipt_code,
       rank: null,
+      algoToReview: r.status && FINISHED.includes(r.status) ? (r.algo_to_review ?? 0) : 0,
+      released: r.released_at !== null,
     };
   });
 
@@ -145,6 +156,8 @@ export async function getExamResults(examId: string): Promise<ExamResults | null
       code: questionVersions.code,
       codeLanguage: questionVersions.codeLanguage,
       options: questionVersions.options,
+      isAlgo: sql<boolean>`${questionVersions.algo} is not null`,
+      isText: sql<boolean>`coalesce(${questionVersions.algo}->>'kind', '') = 'texte'`,
     })
     .from(examQuestions)
     .innerJoin(questionVersions, eq(questionVersions.id, examQuestions.questionVersionId))
@@ -162,6 +175,11 @@ export async function getExamResults(examId: string): Promise<ExamResults | null
           shownAt: attemptQuestions.shownAt,
           answeredAt: attemptQuestions.answeredAt,
           expiresAt: attemptQuestions.expiresAt,
+          isCorrect: attemptQuestions.isCorrect,
+          hasCode: sql<boolean>`coalesce(btrim(${attemptQuestions.codeAnswer}), '') <> ''`,
+          codeAnswer: attemptQuestions.codeAnswer,
+          grading: attemptQuestions.grading,
+          pointsAwarded: attemptQuestions.pointsAwarded,
         })
         .from(attemptQuestions)
         .where(inArray(attemptQuestions.attemptId, gradedIds))
@@ -174,6 +192,9 @@ export async function getExamResults(examId: string): Promise<ExamResults | null
     byQuestion.set(a.examQuestionId, list);
   }
 
+  const nameByAttempt = new Map(
+    students.filter((s) => s.attemptId).map((s) => [s.attemptId!, s.fullName]),
+  );
   const questions = questionRows.map((q) => {
     const correctIds = q.options.filter((o) => o.isCorrect).map((o) => o.id);
     const responses: QuestionResponse[] = (byQuestion.get(q.id) ?? [])
@@ -181,10 +202,15 @@ export async function getExamResults(examId: string): Promise<ExamResults | null
       .filter((a) => a.status !== "A_VENIR" && a.status !== "EN_COURS")
       .map((a) => ({
         studentScore: scoreByAttempt.get(a.attemptId) ?? 0,
-        selectedOptionIds: a.selectedOptionIds,
+        // Algorithme : « répondu » si du code a été rendu, réussite fixée par la correction.
+        selectedOptionIds: q.isAlgo ? (a.hasCode ? ["code"] : []) : a.selectedOptionIds,
         // Calculé avec la clé actuelle (à jour après une correction).
         isCorrect:
-          a.status === "NEUTRALISEE" ? null : isExactMatch(a.selectedOptionIds, correctIds),
+          a.status === "NEUTRALISEE"
+            ? null
+            : q.isAlgo
+              ? a.isCorrect === true
+              : isExactMatch(a.selectedOptionIds, correctIds),
         invalidated: a.status === "INVALIDEE",
         timeSpentSec: timeSpentSec(a.shownAt, a.answeredAt ?? a.expiresAt, q.durationSec),
       }));
@@ -201,9 +227,24 @@ export async function getExamResults(examId: string): Promise<ExamResults | null
         fixedPosition: o.fixedPosition,
       })),
       multiple: isMultipleAnswer(q.options),
+      isAlgo: q.isAlgo,
+      algoKind: q.isAlgo ? (q.isText ? ("texte" as const) : ("algo" as const)) : undefined,
       points: q.points,
       durationSec: q.durationSec,
       neutralized: q.neutralizedAt !== null,
+      algoCopies: q.isAlgo
+        ? (byQuestion.get(q.id) ?? [])
+            .filter((a) => a.status !== "A_VENIR" && a.status !== "EN_COURS")
+            .map((a) => ({
+              attemptId: a.attemptId,
+              fullName: nameByAttempt.get(a.attemptId) ?? "Étudiant",
+              code: (a.codeAnswer ?? "").slice(0, 8_000),
+              pointsAwarded: a.pointsAwarded,
+              grading: a.grading,
+            }))
+            .sort((x, y) => x.fullName.localeCompare(y.fullName, "fr"))
+            .slice(0, 200)
+        : undefined,
       analysis: analyzeQuestion(
         responses,
         correctIds,
@@ -248,6 +289,9 @@ export async function getExamResults(examId: string): Promise<ExamResults | null
         const d = students.map((s) => s.durationSec).filter((x): x is number => x !== null);
         return d.length ? Math.round(d.reduce((a, b) => a + b, 0) / d.length) : null;
       })(),
+      algoToReview: students
+        .filter((s) => s.algoToReview > 0 && s.attemptId)
+        .map((s) => ({ attemptId: s.attemptId!, fullName: s.fullName, count: s.algoToReview })),
     },
     histogram: histogram(scores),
     students,
@@ -291,6 +335,9 @@ export async function getStudentCopy(
       codeLanguage: questionVersions.codeLanguage,
       options: questionVersions.options,
       explanation: questionVersions.explanation,
+      algo: questionVersions.algo,
+      codeAnswer: attemptQuestions.codeAnswer,
+      grading: attemptQuestions.grading,
     })
     .from(attemptQuestions)
     .innerJoin(examQuestions, eq(examQuestions.id, attemptQuestions.examQuestionId))
@@ -327,6 +374,14 @@ export async function getStudentCopy(
         ? timeSpentSec(q.shownAt, q.answeredAt ?? q.expiresAt, q.durationSec)
         : null,
       explanation: q.explanation,
+      algo: q.algo
+        ? {
+            kind: q.algo.kind === "texte" ? ("texte" as const) : ("algo" as const),
+            code: q.codeAnswer,
+            grading: q.grading,
+            solution: q.algo.solution,
+          }
+        : null,
     };
   });
 
@@ -347,6 +402,81 @@ export async function getStudentCopy(
     violationCount: a.violationCount,
     neutralizations: a.networkNeutralizations,
     flagged: a.flaggedForReview,
+    released: a.releasedAt !== null,
+    toValidate: questions.filter(
+      (q) =>
+        q.algo &&
+        q.algo.code?.trim() &&
+        q.algo.grading?.status !== "done" &&
+        q.status !== "INVALIDEE",
+    ).length,
     questions,
   };
+}
+
+export interface GradingQueueItem {
+  attemptQuestionId: string;
+  attemptId: string;
+  fullName: string;
+  questionNumber: number;
+  prompt: string;
+  kind: "algo" | "texte";
+  answer: string;
+  solution: string;
+  points: number;
+  pointsAwarded: number | null;
+  grading: AlgoGrading | null;
+}
+
+/** File de correction : réponses libres (algorithme / rédaction) des copies terminées. */
+export async function getGradingQueue(
+  examId: string,
+  onlyToValidate: boolean,
+): Promise<GradingQueueItem[]> {
+  const rows = await getDb()
+    .select({
+      attemptQuestionId: attemptQuestions.id,
+      attemptId: attemptQuestions.attemptId,
+      fullName: profiles.fullName,
+      position: examQuestions.position,
+      prompt: questionVersions.prompt,
+      algo: questionVersions.algo,
+      answer: attemptQuestions.codeAnswer,
+      points: examQuestions.points,
+      pointsAwarded: attemptQuestions.pointsAwarded,
+      grading: attemptQuestions.grading,
+      status: attemptQuestions.status,
+    })
+    .from(attemptQuestions)
+    .innerJoin(attempts, eq(attempts.id, attemptQuestions.attemptId))
+    .innerJoin(profiles, eq(profiles.id, attempts.studentId))
+    .innerJoin(examQuestions, eq(examQuestions.id, attemptQuestions.examQuestionId))
+    .innerJoin(questionVersions, eq(questionVersions.id, examQuestions.questionVersionId))
+    .where(
+      and(
+        eq(attempts.examId, examId),
+        sql`${attempts.status} not in ('EN_COURS', 'ANNULEE')`,
+        sql`${questionVersions.algo} is not null`,
+        sql`${attemptQuestions.status} <> 'INVALIDEE'`,
+        sql`coalesce(btrim(${attemptQuestions.codeAnswer}), '') <> ''`,
+        onlyToValidate
+          ? sql`coalesce(${attemptQuestions.grading}->>'status', '') <> 'done'`
+          : undefined,
+      ),
+    )
+    .orderBy(asc(examQuestions.position), asc(profiles.fullName))
+    .limit(500);
+  return rows.map((r) => ({
+    attemptQuestionId: r.attemptQuestionId,
+    attemptId: r.attemptId,
+    fullName: r.fullName,
+    questionNumber: r.position + 1,
+    prompt: r.prompt,
+    kind: r.algo?.kind === "texte" ? "texte" : "algo",
+    answer: (r.answer ?? "").slice(0, 12_000),
+    solution: r.algo?.solution ?? "",
+    points: r.points,
+    pointsAwarded: r.pointsAwarded,
+    grading: r.grading,
+  }));
 }

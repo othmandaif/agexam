@@ -28,6 +28,8 @@ export const securitySettingsSchema = z.object({
   eventMergeWindowMs: z.number().int().min(0).max(10_000),
   blockCopyPaste: z.boolean(),
   shuffleAnswers: z.boolean(),
+  /** Algorithmes : la note proposée par la correction automatique attend la validation du formateur. */
+  validateAlgoGrades: z.boolean().optional(),
 });
 export type SecuritySettings = z.infer<typeof securitySettingsSchema>;
 

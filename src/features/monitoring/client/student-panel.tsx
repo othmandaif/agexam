@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import { paths } from "@/lib/routes";
+
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Clock, Undo2, X } from "lucide-react";
 import { useTransition } from "react";
@@ -125,6 +128,15 @@ export function StudentPanel({
             L&apos;étudiant n&apos;a pas encore commencé l&apos;examen.
           </p>
         )}
+
+        {!active && attemptId && student.total > 0 ? (
+          <Link
+            href={paths.examCopy(examId, attemptId)}
+            className="flex items-center justify-center gap-2 rounded-field bg-primary px-3 py-2.5 text-sm font-semibold text-white no-underline hover:bg-primary-strong"
+          >
+            Voir, corriger et rendre la copie →
+          </Link>
+        ) : null}
 
         {active && student.currentNumber && attemptId ? (
           <div className="flex flex-col gap-2 rounded-field bg-canvas p-3">

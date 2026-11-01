@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 import { PageHeader } from "@/components/layout/page-header";
 import { buttonVariants } from "@/components/ui/button";
+import { LiveRefresh } from "@/components/ui/live-refresh";
 import { PrintButton } from "@/features/attempts/client/print-button";
 import { getManageableExam } from "@/features/exams/server/service";
 import { getAttemptTimeline } from "@/features/monitoring/server/queries";
@@ -58,6 +59,19 @@ export default async function CopyPage({
         }
       />
 
+      {copy.status === "EN_COURS" ||
+      copy.questions.some(
+        (q) => q.algo?.grading && ["pending", "running"].includes(q.algo.grading.status),
+      ) ? (
+        <div className="flex justify-end">
+          <LiveRefresh
+            intervalSec={copy.status === "EN_COURS" ? 15 : 6}
+            label={
+              copy.status === "EN_COURS" ? "Copie en cours, suivi en direct" : "Correction en cours"
+            }
+          />
+        </div>
+      ) : null}
       <StudentCopyView copy={copy} timeline={timeline} />
     </>
   );

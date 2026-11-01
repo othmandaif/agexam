@@ -9,6 +9,7 @@ import { toEditorInitial } from "@/features/exams/server/editor-data";
 import { getEditorOptions, getExamDetail } from "@/features/exams/server/queries";
 import { paths } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Modifier l'examen" };
 
@@ -19,7 +20,7 @@ export default async function EditExamPage({ params }: { params: Promise<{ examI
 
   const [exam, options] = await Promise.all([
     getExamDetail(user, examId),
-    getEditorOptions(user.establishmentId),
+    getEditorOptions(user.establishmentId, viewerOf(user)),
   ]);
   if (!exam) notFound();
 

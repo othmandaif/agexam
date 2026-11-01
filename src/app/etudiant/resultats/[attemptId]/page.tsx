@@ -1,14 +1,17 @@
-import { Check, CircleCheck, Lock, X } from "lucide-react";
+import { Check, CircleCheck, Hourglass, LoaderCircle, Lock, X } from "lucide-react";
 import type { Metadata, Route } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
+import { FreeAnswer } from "@/components/exam/free-answer";
+import { LiveRefresh } from "@/components/ui/live-refresh";
 import { CodeBlock } from "@/components/exam/code-block";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AttemptStatus } from "@/domain/enums";
 import { PASS_MARK } from "@/domain/statistics";
 import { PrintButton } from "@/features/attempts/client/print-button";
+import { scheduleAlgoGrading } from "@/features/attempts/server/algo-grader";
 import { syncAttemptIfActive } from "@/features/attempts/server/engine";
 import { getStudentResult } from "@/features/attempts/server/queries";
 import { formatDateTime } from "@/lib/datetime";
@@ -63,6 +66,8 @@ export default async function StudentResultPage({
   const result = await getStudentResult(student, attemptId);
   if (!result) notFound();
   const { receipt, score, counts, correction, level } = result;
+  // Correction d'algorithme restée en attente : relancée en arrière-plan.
+  if (result.gradingPending) scheduleAlgoGrading(attemptId);
   const pct = score?.outOf20 != null ? Math.max(0, Math.min(100, (score.outOf20 / 20) * 100)) : 0;
   const passed = score?.outOf20 != null && score.outOf20 >= PASS_MARK;
   const ring = passed ? "var(--color-mint-strong)" : "var(--color-warning-fill)";
@@ -148,6 +153,24 @@ export default async function StudentResultPage({
                   </p>
                 ) : null}
               </div>
+            ) : result.awaiting === "correction" ? (
+              <div className="flex flex-col gap-3 rounded-xl bg-lilac p-4 text-[15px] text-primary-strong">
+                <p className="flex items-center gap-2 font-semibold">
+                  <LoaderCircle className="size-5 shrink-0 animate-spin" aria-hidden /> Correction
+                  automatique en cours…
+                </p>
+                <p className="text-sm">Votre note s&apos;affichera ici dans quelques instants.</p>
+                <LiveRefresh intervalSec={5} label="Actualisation" compact />
+              </div>
+            ) : result.awaiting === "validation" ? (
+              <div className="flex items-start gap-3 rounded-xl bg-canvas p-4 text-[15px] text-ink-soft">
+                <Hourglass className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
+                <span>
+                  <strong className="block text-ink">Résultats disponibles ultérieurement.</strong>
+                  Votre copie contient une réponse rédigée ou un algorithme : votre formateur la
+                  corrige. Votre note s&apos;affichera ici dès qu&apos;elle sera validée.
+                </span>
+              </div>
             ) : (
               <div className="flex items-start gap-3 rounded-xl bg-canvas p-4 text-[15px] text-ink-soft">
                 <Lock className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
@@ -216,8 +239,32 @@ export default async function StudentResultPage({
                   </span>
                 </header>
                 <p className="font-display font-semibold whitespace-pre-line">{q.prompt}</p>
-                {q.code ? (
+                {q.code && (!q.algo || q.algo.kind === "texte") ? (
                   <CodeBlock code={q.code} language={q.codeLanguage} fontSize={13} />
+                ) : null}
+                {q.algo ? (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-bold text-muted">
+                      {q.algo.kind === "texte" ? "Votre réponse" : "Votre algorithme"}
+                    </span>
+                    <FreeAnswer text={q.algo.code} kind={q.algo.kind} />
+                    {q.algo.pending ? (
+                      <p className="flex items-center gap-2 rounded-lg bg-lilac px-3 py-2 text-sm text-primary-strong">
+                        <LoaderCircle className="size-4 animate-spin" aria-hidden /> Note affichée
+                        après validation par votre formateur.
+                      </p>
+                    ) : q.algo.testsTotal || q.algo.comment ? (
+                      <div className="rounded-lg bg-canvas px-3 py-2 text-sm text-ink-soft">
+                        <strong>Correction automatique.</strong>
+                        {q.algo.testsTotal
+                          ? ` ${q.algo.testsPassed} / ${q.algo.testsTotal} jeux d'essai réussis.`
+                          : null}
+                        {q.algo.comment ? (
+                          <span className="mt-1 block">{q.algo.comment}</span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
                 <ul className="flex flex-col gap-1.5">
                   {q.options.map((o, i) => (

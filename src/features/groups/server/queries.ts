@@ -3,8 +3,13 @@ import { and, asc, eq, ilike, notExists, or } from "drizzle-orm";
 import { currentAcademicYear } from "@/domain/academic-year";
 import { getDb } from "@/server/db/client";
 import { examGroups, groupMembers, groups, profiles } from "@/server/db/schema";
+import { groupScope, studentScope } from "@/server/scope";
 
-export async function listGroups(establishmentId: string, year: string = currentAcademicYear()) {
+export async function listGroups(
+  establishmentId: string,
+  year: string = currentAcademicYear(),
+  viewerId: string | null = null,
+) {
   const db = getDb();
   return db
     .select({
@@ -15,12 +20,22 @@ export async function listGroups(establishmentId: string, year: string = current
       examCount: db.$count(examGroups, eq(examGroups.groupId, groups.id)),
     })
     .from(groups)
-    .where(and(eq(groups.establishmentId, establishmentId), eq(groups.academicYear, year)))
+    .where(
+      and(
+        eq(groups.establishmentId, establishmentId),
+        eq(groups.academicYear, year),
+        groupScope(viewerId),
+      ),
+    )
     .orderBy(asc(groups.name));
 }
 
 /** Groupe, uniquement s'il appartient à l'établissement. */
-export async function getGroup(establishmentId: string, groupId: string) {
+export async function getGroup(
+  establishmentId: string,
+  groupId: string,
+  viewerId: string | null = null,
+) {
   const db = getDb();
   const [row] = await db
     .select({
@@ -31,7 +46,13 @@ export async function getGroup(establishmentId: string, groupId: string) {
       examCount: db.$count(examGroups, eq(examGroups.groupId, groups.id)),
     })
     .from(groups)
-    .where(and(eq(groups.id, groupId), eq(groups.establishmentId, establishmentId)))
+    .where(
+      and(
+        eq(groups.id, groupId),
+        eq(groups.establishmentId, establishmentId),
+        groupScope(viewerId),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }
@@ -56,6 +77,7 @@ export async function listAvailableStudents(
   establishmentId: string,
   groupId: string,
   search?: string,
+  viewerId: string | null = null,
 ) {
   const db = getDb();
   const term = search?.trim();
@@ -68,6 +90,7 @@ export async function listAvailableStudents(
         eq(profiles.role, "ETUDIANT"),
         eq(profiles.isActive, true),
         eq(profiles.academicYear, currentAcademicYear()),
+        studentScope(viewerId, "profiles"),
         notExists(
           db
             .select({ one: groupMembers.profileId })

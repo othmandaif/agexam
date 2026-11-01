@@ -12,6 +12,7 @@ export function bankQuestionsToText(items: readonly BankQuestion[]): string {
       durationSec: q.suggestedDurationSec,
       points: q.defaultPoints,
       explanation: q.explanation,
+      algo: q.algo,
     })),
   );
 }

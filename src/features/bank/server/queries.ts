@@ -2,6 +2,7 @@ import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import type { CodeLanguage, Difficulty, QuestionType } from "@/domain/enums";
 import type { QuestionOption } from "@/domain/exam-settings";
+import type { AlgoQuestionData } from "@/server/db/schema";
 import { observedDifficulty } from "@/domain/statistics";
 import type { TenantUser } from "@/server/auth/session";
 import { getDb } from "@/server/db/client";
@@ -32,6 +33,7 @@ interface Row {
   code_language: CodeLanguage | null;
   options: QuestionOption[];
   explanation: string | null;
+  algo: AlgoQuestionData | null;
   suggested_duration_sec: number;
   default_points: string;
   archived_at: string | null;
@@ -52,7 +54,7 @@ const SELECT = sql`
   select
     q.id, q.type, q.difficulty, q.module_id, m.code as module_code,
     q.chapter_id, c.name as chapter_name, q.author_id, p.full_name as author_name,
-    cv.version, cv.prompt, cv.code, cv.code_language, cv.options, cv.explanation,
+    cv.version, cv.prompt, cv.code, cv.code_language, cv.options, cv.explanation, cv.algo,
     q.suggested_duration_sec, cv.default_points, q.archived_at, q.created_at,
     coalesce(u.exam_count, 0)::int as exam_count,
     coalesce(u.draft_count, 0)::int as draft_count,
@@ -109,6 +111,7 @@ function toQuestion(r: Row): BankQuestion {
       fixedPosition: !!o.fixedPosition,
     })),
     explanation: r.explanation,
+    algo: r.algo ? { kind: r.algo.kind, solution: r.algo.solution, tests: r.algo.tests } : null,
     suggestedDurationSec: r.suggested_duration_sec,
     defaultPoints: Number(r.default_points),
     archived: r.archived_at !== null,

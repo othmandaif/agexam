@@ -10,6 +10,11 @@ import { requireTenant } from "@/server/auth/session";
 import {
   allowRetake,
   correctAnswerKey,
+  acceptAlgoGrade,
+  acceptAllProposedGrades,
+  regradeAlgo,
+  setAlgoManualGrade,
+  setAttemptReleased,
   setAttemptReviewed,
   setQuestionNeutralized,
   setClassBonus,
@@ -146,6 +151,26 @@ export async function reviewAttemptAction(attemptId: string, reviewed: boolean):
   }
 }
 
+export async function releaseAttemptAction(attemptId: string, released: boolean): Promise<State> {
+  try {
+    const staff = await requireTenant(...STAFF);
+    const attempt = await setAttemptReleased(
+      staff,
+      uuid.parse(attemptId),
+      z.boolean().parse(released),
+    );
+    refresh(attempt.examId, attempt.id);
+    return {
+      status: "success",
+      message: released
+        ? "Copie rendue : l'étudiant voit sa note."
+        : "Copie reprise : la note n'est plus visible par l'étudiant.",
+    };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
 export async function allowRetakeAction(attemptId: string): Promise<State> {
   try {
     const staff = await requireTenant(...STAFF);
@@ -154,6 +179,66 @@ export async function allowRetakeAction(attemptId: string): Promise<State> {
     return {
       status: "success",
       message: "Copie annulée : l'étudiant peut repasser l'examen tant qu'il est ouvert.",
+    };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function regradeAlgoAction(attemptQuestionId: string): Promise<State> {
+  try {
+    const staff = await requireTenant(...STAFF);
+    const attempt = await regradeAlgo(staff, uuid.parse(attemptQuestionId));
+    refresh(attempt.examId, attempt.id);
+    return { status: "success", message: "Correction relancée." };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function setAlgoGradeAction(
+  attemptQuestionId: string,
+  points: number,
+  comment: string,
+): Promise<State> {
+  try {
+    const staff = await requireTenant(...STAFF);
+    const attempt = await setAlgoManualGrade(
+      staff,
+      uuid.parse(attemptQuestionId),
+      z.number().finite().parse(points),
+      z.string().trim().max(600).parse(comment) || null,
+    );
+    refresh(attempt.examId, attempt.id);
+    return { status: "success", message: "Note enregistrée." };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function acceptAlgoGradeAction(attemptQuestionId: string): Promise<State> {
+  try {
+    const staff = await requireTenant(...STAFF);
+    const attempt = await acceptAlgoGrade(staff, uuid.parse(attemptQuestionId));
+    refresh(attempt.examId, attempt.id);
+    return { status: "success", message: "Note validée." };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function acceptAllGradesAction(examId: string): Promise<State> {
+  try {
+    const staff = await requireTenant(...STAFF);
+    const id = uuid.parse(examId);
+    const n = await acceptAllProposedGrades(staff, id);
+    refresh(id);
+    revalidatePath(paths.examGrading(id));
+    return {
+      status: "success",
+      message: n
+        ? `${n} note${n > 1 ? "s" : ""} validée${n > 1 ? "s" : ""}.`
+        : "Aucune note proposée à valider.",
     };
   } catch (error) {
     return actionError(error);

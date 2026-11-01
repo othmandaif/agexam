@@ -22,6 +22,7 @@ export function toEditorInitial(exam: ExamDetail): ExamEditorInitial {
       resultReleaseMode: exam.resultReleaseMode,
       shuffleAnswers: exam.securitySettings?.shuffleAnswers ?? DEFAULT_EXAM_SETTINGS.shuffleAnswers,
       blockCopyPaste: exam.securitySettings?.blockCopyPaste ?? DEFAULT_EXAM_SETTINGS.blockCopyPaste,
+      validateAlgoGrades: exam.securitySettings?.validateAlgoGrades ?? true,
       isPractice: exam.isPractice,
       timerMode: exam.timerMode,
       globalDurationSec: exam.globalDurationSec,

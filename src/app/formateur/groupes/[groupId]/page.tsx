@@ -22,6 +22,7 @@ import {
 import { ROUTES } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
 import { currentAcademicYear } from "@/domain/academic-year";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Groupe" };
 
@@ -37,16 +38,16 @@ export default async function GroupPage({
   const { q } = await searchParams;
   if (!z.uuid().safeParse(groupId).success) notFound();
 
-  const group = await getGroup(user.establishmentId, groupId);
+  const group = await getGroup(user.establishmentId, groupId, viewerOf(user));
   if (!group) notFound();
   // Année passée : consultation seule. Structure du groupe : administrateur.
   const editable = group.academicYear === currentAcademicYear();
-  const canManage = editable && user.role === "ADMIN";
+  const canManage = editable && user.role === "FORMATEUR";
 
   const [members, available] = await Promise.all([
     listGroupMembers(group.id),
     group.academicYear === currentAcademicYear()
-      ? listAvailableStudents(user.establishmentId, group.id, q)
+      ? listAvailableStudents(user.establishmentId, group.id, q, viewerOf(user))
       : Promise.resolve([]),
   ]);
 
@@ -61,11 +62,7 @@ export default async function GroupPage({
           <>
             {editable ? (
               <Link
-                href={
-                  user.role === "ADMIN"
-                    ? ROUTES.admin.import
-                    : (`${ROUTES.trainer.studentsImport}?groupe=${group.id}` as Route)
-                }
+                href={`${ROUTES.trainer.studentsImport}?groupe=${group.id}` as Route}
                 className={buttonVariants({ variant: "outline" })}
               >
                 <Upload aria-hidden /> Importer des étudiants

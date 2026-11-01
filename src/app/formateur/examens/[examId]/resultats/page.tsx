@@ -1,6 +1,7 @@
 import {
   BarChart3,
   CalendarDays,
+  ClipboardCheck,
   Download,
   FileDown,
   FileText,
@@ -15,6 +16,8 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 import { ExamPhaseBadge } from "@/components/exam/exam-phase-badge";
 import { buttonVariants } from "@/components/ui/button";
+import { LiveRefresh } from "@/components/ui/live-refresh";
+import { resumeExamGrading } from "@/features/attempts/server/algo-grader";
 import { syncExamAttempts } from "@/features/attempts/server/engine";
 import { getManageableExam } from "@/features/exams/server/service";
 import { BonusPanel } from "@/features/results/client/bonus-panel";
@@ -49,6 +52,8 @@ export default async function ExamResultsPage({
   }
   // Copies abandonnées (navigateur fermé) : notées avant l'affichage.
   await syncExamAttempts(examId);
+  // Algorithmes restés sans correction (instance arrêtée…) : relancés en arrière-plan.
+  await resumeExamGrading(examId);
   const results = await getExamResults(examId);
   if (!results) notFound();
   const { exam, summary } = results;
@@ -78,6 +83,9 @@ export default async function ExamResultsPage({
               <p className="text-[13px] font-semibold text-muted">Résultats de l&apos;examen</p>
               <h1 className="flex flex-wrap items-center gap-3 text-[26px] leading-tight font-bold">
                 {exam.title} <ExamPhaseBadge phase={exam.phase} />
+                {exam.phase === "OUVERT" || summary.inProgress > 0 ? (
+                  <LiveRefresh intervalSec={20} label="Résultats en direct" />
+                ) : null}
               </h1>
               <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13.5px] text-muted">
                 <span className="inline-flex items-center gap-1.5">
@@ -92,7 +100,7 @@ export default async function ExamResultsPage({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {exam.phase === "OUVERT" ? (
+            {exam.phase === "OUVERT" || summary.inProgress > 0 ? (
               <Link
                 href={paths.examMonitor(examId)}
                 className={buttonVariants({ variant: "outline" })}
@@ -100,6 +108,17 @@ export default async function ExamResultsPage({
                 <Radio aria-hidden /> Suivi en direct
               </Link>
             ) : null}
+            <Link
+              href={paths.examGrading(examId)}
+              className={buttonVariants({
+                variant: summary.algoToReview.length > 0 ? "primary" : "outline",
+              })}
+            >
+              <ClipboardCheck aria-hidden /> Corriger
+              {summary.algoToReview.length > 0
+                ? ` (${summary.algoToReview.reduce((n, c) => n + c.count, 0)})`
+                : ""}
+            </Link>
             <Link
               href={paths.examAnswerSheets(examId)}
               className={buttonVariants({ variant: "outline" })}

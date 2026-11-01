@@ -5,6 +5,7 @@ import { ImportWizard } from "@/features/accounts/components/import-wizard";
 import { listGroupOptions } from "@/features/accounts/server/queries";
 import { ROUTES } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Importer des étudiants" };
 
@@ -16,7 +17,7 @@ export default async function TrainerImportStudentsPage({
   const user = await requireTenant("FORMATEUR", "ADMIN");
   const [{ groupe }, groups] = await Promise.all([
     searchParams,
-    listGroupOptions(user.establishmentId),
+    listGroupOptions(user.establishmentId, undefined, viewerOf(user)),
   ]);
   return (
     <>

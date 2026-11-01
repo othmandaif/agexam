@@ -1,5 +1,6 @@
 import "server-only";
 import ExcelJS from "exceljs";
+import { groupScope, viewerOf } from "@/server/scope";
 import { and, eq, inArray } from "drizzle-orm";
 import { currentAcademicYear } from "@/domain/academic-year";
 import { normalizeKey } from "@/lib/text";
@@ -104,6 +105,7 @@ export async function resolveTargetGroup(
         eq(groups.id, groupId),
         eq(groups.establishmentId, actor.establishmentId),
         eq(groups.academicYear, currentAcademicYear()),
+        groupScope(viewerOf(actor)),
       ),
     )
     .limit(1);

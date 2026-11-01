@@ -46,6 +46,12 @@ export interface BankQuestion {
   codeLanguage: CodeLanguage | null;
   options: BankOption[];
   explanation: string | null;
+  /** Question d'algorithme (formateur uniquement). */
+  algo: {
+    kind?: "algo" | "texte";
+    solution: string;
+    tests: { inputs: string[]; expected: string }[];
+  } | null;
   suggestedDurationSec: number;
   defaultPoints: number;
   archived: boolean;

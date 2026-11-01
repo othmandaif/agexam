@@ -1,14 +1,23 @@
 import "server-only";
-import { and, eq, isNull, max, ne } from "drizzle-orm";
+import { and, eq, isNull, max, ne, sql } from "drizzle-orm";
+import type { AlgoGrading } from "@/domain/algo-grading";
 import { isMultipleAnswer } from "@/domain/attempt-rules";
 import type { ResultReleaseMode, ResultVisibility } from "@/domain/enums";
 import { parseQuestionText, setCorrectAnswers } from "@/domain/question-text";
-import { rescoreExam } from "@/features/attempts/server/engine";
+import { gradeAttemptAlgos } from "@/features/attempts/server/algo-grader";
+import { rescoreAttempt, rescoreExam } from "@/features/attempts/server/engine";
 import { getEditableExam } from "@/features/exams/server/service";
 import { audit } from "@/server/audit";
 import type { TenantUser } from "@/server/auth/session";
 import { getDb } from "@/server/db/client";
-import { attempts, examQuestions, exams, questions, questionVersions } from "@/server/db/schema";
+import {
+  attemptQuestions,
+  attempts,
+  examQuestions,
+  exams,
+  questions,
+  questionVersions,
+} from "@/server/db/schema";
 import { errors } from "@/server/http/errors";
 import { questionFingerprint } from "@/server/questions/fingerprint";
 
@@ -246,6 +255,24 @@ async function manageableAttempt(staff: TenantUser, attemptId: string) {
   return row;
 }
 
+/** Rend la copie à l'étudiant (note visible selon le niveau de détail choisi), ou la reprend. */
+export async function setAttemptReleased(staff: TenantUser, attemptId: string, released: boolean) {
+  const attempt = await manageableAttempt(staff, attemptId);
+  await getDb().transaction(async (tx) => {
+    await tx
+      .update(attempts)
+      .set({ releasedAt: released ? new Date() : null })
+      .where(eq(attempts.id, attempt.id));
+    await audit(tx, {
+      actorId: staff.id,
+      action: released ? "attempt.released" : "attempt.unreleased",
+      entityType: "attempt",
+      entityId: attempt.id,
+    });
+  });
+  return attempt;
+}
+
 /** Marque une copie « à revoir » comme vérifiée (ou la signale de nouveau). */
 export async function setAttemptReviewed(staff: TenantUser, attemptId: string, reviewed: boolean) {
   const attempt = await manageableAttempt(staff, attemptId);
@@ -288,4 +315,133 @@ export async function allowRetake(staff: TenantUser, attemptId: string) {
     });
   });
   return attempt;
+}
+
+// ── Questions d'algorithme ──────────────────────────────────────────────
+
+async function algoAnswerOf(staff: TenantUser, attemptQuestionId: string) {
+  const [row] = await getDb()
+    .select({
+      id: attemptQuestions.id,
+      attemptId: attemptQuestions.attemptId,
+      grading: attemptQuestions.grading,
+      points: examQuestions.points,
+      isAlgo: sql<boolean>`${questionVersions.algo} is not null`,
+    })
+    .from(attemptQuestions)
+    .innerJoin(examQuestions, eq(examQuestions.id, attemptQuestions.examQuestionId))
+    .innerJoin(questionVersions, eq(questionVersions.id, examQuestions.questionVersionId))
+    .where(eq(attemptQuestions.id, attemptQuestionId))
+    .limit(1);
+  if (!row || !row.isAlgo) throw errors.notFound("Question d'algorithme introuvable.");
+  const attempt = await manageableAttempt(staff, row.attemptId);
+  if (attempt.status === "EN_COURS" || attempt.status === "ANNULEE") {
+    throw errors.conflict("La copie n'est pas terminée.");
+  }
+  return { ...row, attempt };
+}
+
+/** Relance la correction automatique d'un algorithme (attendue ici, quelques secondes). */
+export async function regradeAlgo(staff: TenantUser, attemptQuestionId: string) {
+  const row = await algoAnswerOf(staff, attemptQuestionId);
+  await getDb()
+    .update(attemptQuestions)
+    .set({ grading: { status: "pending", tries: 0 } })
+    .where(eq(attemptQuestions.id, row.id));
+  await gradeAttemptAlgos(row.attemptId);
+  return row.attempt;
+}
+
+/** Note fixée par le formateur (remplace la correction automatique). */
+export async function setAlgoManualGrade(
+  staff: TenantUser,
+  attemptQuestionId: string,
+  points: number,
+  comment: string | null,
+) {
+  const row = await algoAnswerOf(staff, attemptQuestionId);
+  if (points < 0 || points > row.points) {
+    throw errors.badRequest(`Note entre 0 et ${row.points} point(s).`);
+  }
+  const grading: AlgoGrading = {
+    ...row.grading,
+    status: "done",
+    source: "manual",
+    ratio: row.points > 0 ? points / row.points : 0,
+    comment: comment ?? row.grading?.comment,
+    gradedAt: new Date().toISOString(),
+  };
+  await getDb().transaction(async (tx) => {
+    await tx.update(attemptQuestions).set({ grading }).where(eq(attemptQuestions.id, row.id));
+    await rescoreAttempt(tx, row.attemptId);
+    await audit(tx, {
+      actorId: staff.id,
+      action: "attempt_question.manual_grade",
+      entityType: "attempt_question",
+      entityId: row.id,
+      payload: { points, previous: row.grading?.ratio ?? null },
+    });
+  });
+  return row.attempt;
+}
+
+/** Valide la note proposée par la correction automatique (option de l'examen). */
+export async function acceptAlgoGrade(staff: TenantUser, attemptQuestionId: string) {
+  const row = await algoAnswerOf(staff, attemptQuestionId);
+  if (row.grading?.status !== "proposed") throw errors.conflict("Aucune note proposée à valider.");
+  await getDb().transaction(async (tx) => {
+    await tx
+      .update(attemptQuestions)
+      .set({ grading: { ...row.grading!, status: "done", gradedAt: new Date().toISOString() } })
+      .where(eq(attemptQuestions.id, row.id));
+    await rescoreAttempt(tx, row.attemptId);
+    await audit(tx, {
+      actorId: staff.id,
+      action: "attempt_question.accept_grade",
+      entityType: "attempt_question",
+      entityId: row.id,
+      payload: { ratio: row.grading!.ratio ?? 0 },
+    });
+  });
+  return row.attempt;
+}
+
+/** Valide d'un coup toutes les notes proposées d'un examen (copies terminées). */
+export async function acceptAllProposedGrades(staff: TenantUser, examId: string) {
+  await getEditableExam(staff, examId);
+  return getDb().transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        id: attemptQuestions.id,
+        attemptId: attemptQuestions.attemptId,
+        grading: attemptQuestions.grading,
+      })
+      .from(attemptQuestions)
+      .innerJoin(attempts, eq(attempts.id, attemptQuestions.attemptId))
+      .where(
+        and(
+          eq(attempts.examId, examId),
+          sql`${attempts.status} not in ('EN_COURS', 'ANNULEE')`,
+          sql`${attemptQuestions.grading}->>'status' = 'proposed'`,
+        ),
+      );
+    const now = new Date().toISOString();
+    for (const r of rows) {
+      await tx
+        .update(attemptQuestions)
+        .set({ grading: { ...r.grading!, status: "done", gradedAt: now } })
+        .where(eq(attemptQuestions.id, r.id));
+    }
+    for (const attemptId of new Set(rows.map((r) => r.attemptId))) {
+      await rescoreAttempt(tx, attemptId);
+    }
+    await audit(tx, {
+      actorId: staff.id,
+      action: "exam.accept_all_grades",
+      entityType: "exam",
+      entityId: examId,
+      payload: { count: rows.length },
+    });
+    return rows.length;
+  });
 }

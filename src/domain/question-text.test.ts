@@ -198,9 +198,9 @@ DUREE: 1min`;
   it("résume le texte d'exemple sans erreur", () => {
     const r = parseQuestionText(EXAMPLE_QUESTION_TEXT);
     expect(summarize(r)).toEqual({
-      questionCount: 4,
-      totalDurationSec: 30 + 60 + 90 + 30,
-      totalPoints: 5,
+      questionCount: 8,
+      totalDurationSec: 30 + 60 + 20 + 90 + 60 + 45 + 600 + 300,
+      totalPoints: 1 + 2 + 1 + 1 + 1 + 1 + 6 + 2,
       errorCount: 0,
       warningCount: 0,
     });
@@ -261,5 +261,74 @@ describe("setCorrectAnswers", () => {
     const again = parseQuestionText(out).questions[1]!;
     expect(again.options.map((o) => o.isCorrect)).toEqual([true, true, false]);
     expect(again.errors).toEqual([]);
+  });
+});
+
+describe("question d'algorithme", () => {
+  const TEXT = `Q: Écrire un algorithme qui lit n et affiche la somme de 1 à n.
+TYPE: algo
+\`\`\`
+ALGORITHME Somme
+DEBUT
+FIN
+\`\`\`
+\`\`\`solution
+VARIABLES
+  n, i, s : ENTIER
+DEBUT
+  LIRE(n)
+  s <- 0
+  POUR i DE 1 A n FAIRE
+    s <- s + i
+  FINPOUR
+  ECRIRE(s)
+FIN
+\`\`\`
+TEST: 5
+TEST: 0
+POINTS: 6
+DUREE: 15min
+
+Q: Suivante ?
+A) Oui *
+B) Non`;
+
+  it("analyse corrigé, code de départ, jeux d'essai", () => {
+    const r = parseQuestionText(TEXT);
+    expect(r.questions).toHaveLength(2);
+    const q = r.questions[0]!;
+    expect(q.errors).toEqual([]);
+    expect(q.type).toBe("ALGORITHME");
+    expect(q.options).toEqual([]);
+    expect(q.code).toContain("ALGORITHME Somme");
+    expect(q.algo!.solution).toContain("POUR i DE 1 A n");
+    expect(q.algo!.tests).toEqual([{ inputs: ["5"] }, { inputs: ["0"] }]);
+    expect(q.points).toBe(6);
+    expect(q.durationSec).toBe(900);
+    expect(r.questions[1]!.type).toBe("QCM_SIMPLE");
+  });
+
+  it("signale corrigé et jeux manquants", () => {
+    const q = parseQuestionText("Q: Écrire un algo.\nTYPE: algo").questions[0]!;
+    expect(q.errors.join(" ")).toMatch(/Corrigé manquant/);
+    expect(q.errors.join(" ")).toMatch(/au moins un jeu d'essai/);
+    expect(q.points).toBe(4);
+  });
+
+  it("signale un corrigé invalide", () => {
+    const q = parseQuestionText(
+      "Q: x\nTYPE: algo\n```solution\nDEBUT\n x <- 1\nFIN\n```\nTEST: 1 ; 2",
+    ).questions[0]!;
+    expect(q.errors.join(" ")).toMatch(/Corrigé invalide/);
+    expect(q.algo!.tests[0]!.inputs).toEqual(["1", "2"]);
+  });
+
+  it("aller-retour avec buildQuestionText", () => {
+    const q = parseQuestionText(TEXT).questions[0]!;
+    const text = buildQuestionText([{ ...q, options: [] }]);
+    const back = parseQuestionText(text).questions[0]!;
+    expect(back.errors).toEqual([]);
+    expect(back.algo).toEqual(q.algo);
+    expect(back.points).toBe(6);
   });
 });

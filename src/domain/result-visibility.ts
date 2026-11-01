@@ -7,6 +7,8 @@ export interface ResultReleaseInput {
   examClosesAt: Date;
   resultsPublishedAt: Date | null;
   attemptSubmitted: boolean;
+  /** Copie rendue individuellement par le formateur (avant la publication générale). */
+  attemptReleasedAt?: Date | null;
 }
 
 function isExamClosed(input: ResultReleaseInput, now: Date): boolean {
@@ -19,6 +21,7 @@ function isExamClosed(input: ResultReleaseInput, now: Date): boolean {
 
 export function areResultsReleased(input: ResultReleaseInput, now: Date): boolean {
   if (!input.attemptSubmitted) return false;
+  if (input.attemptReleasedAt && input.attemptReleasedAt <= now) return true;
   switch (input.releaseMode) {
     case "IMMEDIAT":
       return true;

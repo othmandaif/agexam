@@ -90,10 +90,21 @@ export const attemptApi = {
       method: "PUT",
       body: JSON.stringify({ attemptQuestionId, selectedOptionIds }),
     }),
-  next: (attemptId: string, attemptQuestionId: string, selectedOptionIds: string[]) =>
+  next: (
+    attemptId: string,
+    attemptQuestionId: string,
+    selectedOptionIds: string[],
+    code?: string,
+  ) =>
     call<AttemptClientState>(`${base(attemptId)}/next`, {
       method: "POST",
-      body: JSON.stringify({ attemptQuestionId, selectedOptionIds }),
+      body: JSON.stringify({ attemptQuestionId, selectedOptionIds, code }),
+    }),
+  /** Algorithme en cours (sauvegarde régulière). */
+  code: (attemptId: string, attemptQuestionId: string, code: string) =>
+    call<{ accepted: boolean; state: AttemptClientState }>(`${base(attemptId)}/code`, {
+      method: "PUT",
+      body: JSON.stringify({ attemptQuestionId, code }),
     }),
   /** Entraînement : démarre la question suivante après la correction. */
   continue: (attemptId: string) =>

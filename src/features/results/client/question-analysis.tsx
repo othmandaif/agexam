@@ -3,12 +3,22 @@
 import { AlertTriangle, Ban, Check, KeyRound, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 import { CodeBlock } from "@/components/exam/code-block";
+import { FreeAnswer } from "@/components/exam/free-answer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FormMessage } from "@/components/ui/form";
 import { useActionRunner } from "@/lib/use-action-runner";
 import { cn } from "@/lib/utils";
-import { fmtPercent, fmtSeconds, SIGNAL_HINTS, SIGNAL_LABELS } from "../labels";
+import Link from "next/link";
+import { paths } from "@/lib/routes";
+import {
+  fmtPercent,
+  fmtSeconds,
+  SIGNAL_HINTS,
+  SIGNAL_LABELS,
+  VERDICT_LABEL,
+  fmtScore,
+} from "../labels";
 import { correctKeyAction, neutralizeQuestionAction } from "../server/actions";
 import type { ResultQuestion } from "../types";
 
@@ -168,6 +178,7 @@ export function QuestionAnalysisCard({
           );
         })}
       </ul>
+      {q.isAlgo ? <AlgoAnswers examId={examId} q={q} /> : null}
       <p className="text-xs text-muted">
         {a.responses} copie{a.responses > 1 ? "s" : ""} analysée{a.responses > 1 ? "s" : ""} ·{" "}
         {a.answered} réponse
@@ -224,9 +235,16 @@ export function QuestionAnalysisCard({
             </Button>
           ) : (
             <>
-              <Button variant="soft" size="sm" disabled={pending} onClick={() => setEditing(true)}>
-                <KeyRound aria-hidden /> Corriger la bonne réponse
-              </Button>
+              {q.isAlgo ? null : (
+                <Button
+                  variant="soft"
+                  size="sm"
+                  disabled={pending}
+                  onClick={() => setEditing(true)}
+                >
+                  <KeyRound aria-hidden /> Corriger la bonne réponse
+                </Button>
+              )}
               <Button
                 variant="danger"
                 size="sm"
@@ -258,5 +276,102 @@ function Stat({ label, value, title }: { label: string; value: string; title?: s
       <dt className="text-[11px] font-bold tracking-wide text-muted uppercase">{label}</dt>
       <dd className="font-display text-lg font-bold tabular-nums">{value}</dd>
     </div>
+  );
+}
+
+/** Algorithme : code rendu et correction de chaque copie. */
+function AlgoAnswers({ examId, q }: { examId: string; q: ResultQuestion }) {
+  const copies = q.algoCopies ?? [];
+  if (copies.length === 0) {
+    return <p className="text-sm text-muted">Aucune copie rendue pour cette question.</p>;
+  }
+  return (
+    <ul className="flex flex-col gap-2">
+      {copies.map((c) => {
+        const g = c.grading;
+        const blank = !c.code.trim();
+        const proposed = g?.status === "proposed";
+        const shown = proposed
+          ? Math.round((g.ratio ?? 0) * q.points * 100) / 100
+          : (c.pointsAwarded ?? 0);
+        const state = blank
+          ? { label: "Sans réponse", tone: "neutral" as const }
+          : !g || g.status === "pending" || g.status === "running"
+            ? { label: "Correction en cours", tone: "neutral" as const }
+            : g.status === "failed"
+              ? { label: "À corriger", tone: "warning" as const }
+              : proposed
+                ? { label: "Note proposée, à valider", tone: "warning" as const }
+                : (g.ratio ?? 0) >= 1
+                  ? { label: "Juste", tone: "success" as const }
+                  : { label: "Partiel", tone: "warning" as const };
+        return (
+          <li key={c.attemptId} className="rounded-field border border-line-soft bg-surface">
+            <details>
+              <summary className="flex cursor-pointer flex-wrap items-center gap-2 px-3.5 py-2.5 text-sm">
+                <span className="font-semibold">{c.fullName}</span>
+                <Badge tone={state.tone}>{state.label}</Badge>
+                {g?.verdict ? (
+                  <span className="text-[13px] text-muted">{VERDICT_LABEL[g.verdict]}</span>
+                ) : null}
+                <span className="ml-auto font-bold tabular-nums">
+                  {blank || !g || g.status === "pending" || g.status === "running"
+                    ? "—"
+                    : `${fmtScore(shown)} / ${fmtScore(q.points)} pt`}
+                </span>
+              </summary>
+              <div className="flex flex-col gap-3 border-t border-line-soft p-3.5">
+                <FreeAnswer text={c.code} kind={q.algoKind} />
+                {g?.testsTotal ? (
+                  <p className="text-[13px] text-muted">
+                    {g.testsPassed} / {g.testsTotal} jeux d&apos;essai réussis
+                  </p>
+                ) : null}
+                {g?.comment ? <p className="text-sm text-ink-soft">{g.comment}</p> : null}
+                {g?.analysis ? (
+                  <div className="flex flex-col gap-1 rounded-field bg-canvas px-3 py-2 text-[13px] text-ink-soft">
+                    <span className="font-bold text-muted">Analyse de la réponse</span>
+                    {g.analysis.split("\n").map((line, i) => (
+                      <p key={i}>{line}</p>
+                    ))}
+                  </div>
+                ) : null}
+                {g?.criteria?.length ? (
+                  <table className="w-full text-[13px]">
+                    <caption className="sr-only">Détail de la note par critère</caption>
+                    <tbody>
+                      {g.criteria.map((cr) => (
+                        <tr key={cr.key} className="border-t border-line-soft align-top">
+                          <td className="py-1.5 pr-3 font-semibold whitespace-nowrap">
+                            {cr.label}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right font-bold whitespace-nowrap tabular-nums">
+                            {fmtScore(Math.round(cr.score * q.points * 100) / 100)} /{" "}
+                            {fmtScore(Math.round(cr.max * q.points * 100) / 100)}
+                          </td>
+                          <td className="py-1.5 text-muted">{cr.note}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : null}
+                {g?.reviewSource === "bareme" ? (
+                  <p className="text-xs text-warning">
+                    Relecture DeepSeek indisponible
+                    {g.reviewError ? ` (${g.reviewError})` : ""} : note calculée sur le barème.
+                  </p>
+                ) : null}
+                <Link
+                  href={`${paths.examCopy(examId, c.attemptId)}#algo`}
+                  className="w-fit text-sm font-semibold text-primary"
+                >
+                  {proposed ? "Valider ou modifier la note →" : "Ouvrir la copie →"}
+                </Link>
+              </div>
+            </details>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

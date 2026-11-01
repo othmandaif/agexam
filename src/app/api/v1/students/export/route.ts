@@ -4,6 +4,7 @@ import { listAccounts, listGroupOptions } from "@/features/accounts/server/queri
 import { requireApiTenant } from "@/server/auth/session";
 import { getViewYear } from "@/server/year";
 import { apiRoute } from "@/server/http/api";
+import { viewerOf } from "@/server/scope";
 
 const EXPORT_LIMIT = 5000;
 
@@ -18,10 +19,10 @@ export const GET = apiRoute(async (req) => {
   const [{ rows }, groups] = await Promise.all([
     listAccounts(
       actor.establishmentId,
-      { role: "ETUDIANT", q, groupId, year },
+      { role: "ETUDIANT", q, groupId, year, viewerId: viewerOf(actor) },
       { offset: 0, limit: EXPORT_LIMIT },
     ),
-    listGroupOptions(actor.establishmentId, year),
+    listGroupOptions(actor.establishmentId, year, viewerOf(actor)),
   ]);
   const groupName = groupId ? groups.find((g) => g.id === groupId)?.name : null;
   const buffer = await buildStudentsExport(

@@ -167,6 +167,12 @@ export function StudentsTable({
                         {s.flagged ? (
                           <Flag className="size-4 text-danger" aria-label="Copie à revoir" />
                         ) : null}
+                        {s.released ? <Badge tone="success">Rendue</Badge> : null}
+                        {s.algoToReview > 0 && href ? (
+                          <Link href={`${href}#algo`} className="no-underline">
+                            <Badge tone="warning">Algo à valider</Badge>
+                          </Link>
+                        ) : null}
                       </span>
                     </td>
                     <td className="px-3 py-3 text-right">

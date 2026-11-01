@@ -24,6 +24,7 @@ import { ROUTES } from "@/lib/routes";
 import { requireTenant } from "@/server/auth/session";
 import { currentAcademicYear } from "@/domain/academic-year";
 import { getViewYear } from "@/server/year";
+import { viewerOf } from "@/server/scope";
 
 export const metadata: Metadata = { title: "Examens" };
 
@@ -53,8 +54,8 @@ export default async function ExamsPage({
   const year = await getViewYear();
 
   const [options, yearGroups, firstPage] = await Promise.all([
-    getEditorOptions(user.establishmentId),
-    listGroupOptions(user.establishmentId, year),
+    getEditorOptions(user.establishmentId, viewerOf(user)),
+    listGroupOptions(user.establishmentId, year, viewerOf(user)),
     listExamsPage(user, { tab, moduleId, groupId, q, year, offset: pg.offset, limit: pg.size }),
   ]);
   // Page hors bornes (après une suppression, un filtre…) : dernière page réelle.

@@ -179,6 +179,45 @@ export function SettingsPanel({ value, onChange }: SettingsPanelProps) {
               onChange={(e) => set("blockCopyPaste", e.target.checked)}
             />
           </label>
+          <fieldset className="flex flex-col gap-2">
+            <legend className="mb-1 text-sm font-semibold">
+              Correction des questions d&apos;algorithme
+            </legend>
+            {(
+              [
+                [
+                  true,
+                  "Je valide les notes",
+                  "Une note est proposée avec son explication ; elle compte après votre validation (ou modification).",
+                ],
+                [
+                  false,
+                  "Correction automatique",
+                  "La note proposée compte tout de suite, sans validation.",
+                ],
+              ] as const
+            ).map(([v, title, help]) => (
+              <label
+                key={String(v)}
+                className={cn(
+                  "flex cursor-pointer items-start gap-3 rounded-[12px] border p-3 text-sm",
+                  value.validateAlgoGrades === v ? "border-primary bg-primary-wash" : "border-line",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="algo-grading"
+                  className="mt-0.5 size-4 accent-primary"
+                  checked={value.validateAlgoGrades === v}
+                  onChange={() => set("validateAlgoGrades", v)}
+                />
+                <span>
+                  <span className="block font-semibold">{title}</span>
+                  <span className="block text-xs text-muted">{help}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
           <p className="text-xs text-muted">
             L&apos;ordre des questions est toujours mélangé, et la navigation est linéaire (pas de
             retour en arrière).

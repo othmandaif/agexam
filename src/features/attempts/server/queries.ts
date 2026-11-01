@@ -1,5 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
+import type { ResultVisibility } from "@/domain/enums";
 import { examPhase } from "@/domain/exam-lifecycle";
 import type { QuestionOption } from "@/domain/exam-settings";
 import { revealLevel } from "@/domain/result-visibility";
@@ -65,6 +66,7 @@ export async function getExamForStudent(student: TenantUser, examId: string) {
       status: attempts.status,
       submittedAt: attempts.submittedAt,
       scoreOutOf20: attempts.scoreOutOf20,
+      freePending: freePendingSql,
     })
     .from(attempts)
     .where(and(eq(attempts.examId, examId), eq(attempts.studentId, student.id)))
@@ -86,7 +88,11 @@ export async function getExamForStudent(student: TenantUser, examId: string) {
       ? mine
           .filter((a) => a.status !== "EN_COURS" && a.status !== "ANNULEE")
           .slice(0, 10)
-          .map((a) => ({ id: a.id, submittedAt: a.submittedAt, scoreOutOf20: a.scoreOutOf20 }))
+          .map((a) => ({
+            id: a.id,
+            submittedAt: a.submittedAt,
+            scoreOutOf20: a.freePending ? null : a.scoreOutOf20,
+          }))
       : [],
   };
 }
@@ -108,6 +114,18 @@ export async function findExamByCode(student: TenantUser, code: string) {
   return exam ?? null;
 }
 
+/**
+ * Réponse libre (algorithme / rédaction) rendue dont la note n'est pas encore
+ * définitive : la note de la copie n'est pas montrée à l'étudiant.
+ */
+const freePendingSql = sql<boolean>`exists (
+  select 1 from ${attemptQuestions} fq
+  where fq.attempt_id = ${attempts.id}
+    and coalesce(btrim(fq.code_answer), '') <> ''
+    and fq.status <> 'INVALIDEE'
+    and coalesce(fq.grading->>'status', '') <> 'done'
+)`;
+
 const releaseFields = {
   isPractice: exams.isPractice,
   resultVisibility: exams.resultVisibility,
@@ -116,6 +134,9 @@ const releaseFields = {
   examStatus: exams.status,
   opensAt: exams.opensAt,
   closesAt: exams.closesAt,
+  attemptReleasedAt: attempts.releasedAt,
+  validateAlgo: sql<boolean>`coalesce((${exams.securitySettings}->>'validateAlgoGrades')::boolean, true)`,
+  freePending: freePendingSql,
 };
 
 /** Tentatives de l'étudiant : en cours (à reprendre) et terminées, avec ce qui est publiable. */
@@ -151,6 +172,7 @@ export async function listStudentAttempts(student: TenantUser) {
                 examClosesAt: r.closesAt ?? now,
                 resultsPublishedAt: r.resultsPublishedAt,
                 attemptSubmitted: true,
+                attemptReleasedAt: r.attemptReleasedAt,
               },
               now,
             );
@@ -159,8 +181,10 @@ export async function listStudentAttempts(student: TenantUser) {
       examTitle: r.examTitle,
       status: r.status,
       submittedAt: r.submittedAt,
-      // La note n'est envoyée que si elle est publiée.
-      scoreOutOf20: level === "AUCUNE" ? null : r.scoreOutOf20,
+      // La note n'est envoyée que si elle est publiée et définitive.
+      scoreOutOf20: level === "AUCUNE" || r.freePending ? null : r.scoreOutOf20,
+      /** Résultat en attente de la validation / correction d'une réponse libre. */
+      awaiting: level !== "AUCUNE" && r.freePending,
     };
   });
 }
@@ -188,7 +212,7 @@ export async function getStudentResult(student: TenantUser, attemptId: string) {
 
   const now = new Date();
   // Entraînement : correction complète dès la fin de l'essai.
-  const level =
+  let level: ResultVisibility =
     row.status === "EN_COURS"
       ? "AUCUNE"
       : row.isPractice
@@ -201,6 +225,7 @@ export async function getStudentResult(student: TenantUser, attemptId: string) {
               examClosesAt: row.closesAt ?? now,
               resultsPublishedAt: row.resultsPublishedAt,
               attemptSubmitted: true,
+              attemptReleasedAt: row.attemptReleasedAt,
             },
             now,
           );
@@ -220,6 +245,10 @@ export async function getStudentResult(student: TenantUser, attemptId: string) {
       codeLanguage: questionVersions.codeLanguage,
       options: questionVersions.options,
       explanation: questionVersions.explanation,
+      isAlgo: sql<boolean>`${questionVersions.algo} is not null`,
+      isText: sql<boolean>`coalesce(${questionVersions.algo}->>'kind', '') = 'texte'`,
+      codeAnswer: attemptQuestions.codeAnswer,
+      grading: attemptQuestions.grading,
     })
     .from(attemptQuestions)
     .innerJoin(examQuestions, eq(examQuestions.id, attemptQuestions.examQuestionId))
@@ -231,16 +260,38 @@ export async function getStudentResult(student: TenantUser, attemptId: string) {
     examNeutralizedAt ? { ...q, status: "NEUTRALISEE" as const } : q,
   );
 
+  const answered = (q: (typeof questions)[number]) =>
+    q.isAlgo ? !!q.codeAnswer?.trim() : q.selectedOptionIds.length > 0;
+  const gradingPending = questions.some(
+    (q) => q.isAlgo && ["pending", "running", "proposed"].includes(q.grading?.status ?? ""),
+  );
+  // Réponse libre rendue sans note définitive : aucune note partielle n'est montrée.
+  const freeNotFinal = questions.filter(
+    (q) =>
+      q.isAlgo &&
+      answered(q) &&
+      q.status !== "INVALIDEE" &&
+      q.status !== "NEUTRALISEE" &&
+      q.grading?.status !== "done",
+  );
+  const awaiting: "validation" | "correction" | null =
+    level === "AUCUNE" || freeNotFinal.length === 0
+      ? null
+      : row.validateAlgo ||
+          freeNotFinal.some(
+            (q) => q.grading?.status === "proposed" || q.grading?.status === "failed",
+          )
+        ? "validation"
+        : "correction";
+  if (awaiting) level = "AUCUNE";
   const counts = {
     total: questions.length,
-    answered: questions.filter((q) => q.selectedOptionIds.length > 0).length,
+    answered: questions.filter(answered).length,
     correct: questions.filter((q) => q.isCorrect === true).length,
-    wrong: questions.filter(
-      (q) => q.isCorrect === false && q.selectedOptionIds.length > 0 && q.status !== "INVALIDEE",
-    ).length,
+    wrong: questions.filter((q) => q.isCorrect === false && answered(q) && q.status !== "INVALIDEE")
+      .length,
     unanswered: questions.filter(
-      (q) =>
-        q.selectedOptionIds.length === 0 && q.status !== "NEUTRALISEE" && q.status !== "INVALIDEE",
+      (q) => !answered(q) && q.status !== "NEUTRALISEE" && q.status !== "INVALIDEE",
     ).length,
     invalidated: questions.filter((q) => q.status === "INVALIDEE").length,
     neutralized: questions.filter((q) => q.status === "NEUTRALISEE").length,
@@ -256,11 +307,18 @@ export async function getStudentResult(student: TenantUser, attemptId: string) {
       total: counts.total,
     },
     level,
+    gradingPending,
+    awaiting,
     // Rien n'est envoyé au-delà du niveau publié.
     score:
       level === "AUCUNE"
         ? null
-        : { outOf20: row.scoreOutOf20, awarded: row.scoreAwarded, max: row.scoreMax },
+        : {
+            outOf20: row.scoreOutOf20,
+            awarded: row.scoreAwarded,
+            max: row.scoreMax,
+            pending: false,
+          },
     counts: level === "NOTE_DETAIL" || level === "CORRECTION" ? counts : null,
     correction:
       level === "CORRECTION"
@@ -275,6 +333,17 @@ export async function getStudentResult(student: TenantUser, attemptId: string) {
               explanation: q.explanation,
               points: q.points,
               pointsAwarded: q.pointsAwarded,
+              // Algorithme : code rendu et correction automatique (ni corrigé ni détail interne).
+              algo: q.isAlgo
+                ? {
+                    kind: q.isText ? ("texte" as const) : ("algo" as const),
+                    code: q.codeAnswer,
+                    pending: ["pending", "running", "proposed"].includes(q.grading?.status ?? ""),
+                    testsPassed: q.grading?.testsPassed ?? null,
+                    testsTotal: q.grading?.testsTotal ?? null,
+                    comment: q.grading?.status === "done" ? (q.grading.comment ?? null) : null,
+                  }
+                : null,
               options: q.optionOrder
                 .map((id) => byId.get(id))
                 .filter((o): o is QuestionOption => !!o)
