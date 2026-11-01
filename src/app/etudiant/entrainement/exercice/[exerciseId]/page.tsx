@@ -34,7 +34,7 @@ export default async function StudentExercisePage({
           <EmptyState
             icon={Lock}
             title="Niveau verrouillé"
-            description="Réussissez un exercice du niveau précédent pour débloquer celui-ci."
+            description="Terminez tous les exercices du niveau précédent pour débloquer celui-ci."
             action={
               <Link
                 href={ROUTES.student.training}

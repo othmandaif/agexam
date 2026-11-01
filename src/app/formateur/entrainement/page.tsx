@@ -25,7 +25,7 @@ export default async function TrainingTracksPage() {
       <PageHeader
         icon={<Code2 />}
         title="Entraînement algorithmique"
-        description="Parcours d'exercices par niveaux. L'étudiant débloque le niveau suivant dès qu'il réussit un exercice du niveau en cours."
+        description="Parcours d'exercices par niveaux. L'étudiant débloque le niveau suivant lorsqu'il a réussi tous les exercices du niveau en cours."
       />
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex flex-col gap-3">

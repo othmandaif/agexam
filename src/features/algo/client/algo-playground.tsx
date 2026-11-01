@@ -63,6 +63,7 @@ export function AlgoPlayground({
   onChange,
   readOnly,
   blockPaste,
+  allowClipboard,
   actions,
   minRows,
   onRunComplete,
@@ -71,6 +72,8 @@ export function AlgoPlayground({
   onChange: (value: string) => void;
   readOnly?: boolean;
   blockPaste?: boolean;
+  /** Formateur : copier / coller autorisés dans l'éditeur. */
+  allowClipboard?: boolean;
   /** Boutons supplémentaires (Soumettre…), à droite d'Exécuter. */
   actions?: React.ReactNode;
   minRows?: number;
@@ -242,6 +245,7 @@ export function AlgoPlayground({
           onChange={onChange}
           readOnly={readOnly}
           blockPaste={blockPaste}
+          allowClipboard={allowClipboard}
           errorLine={errorLine}
           lintLine={errorLine ? null : (lint?.line ?? null)}
           fontSize={fontSize}

@@ -620,10 +620,12 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
 
   // Copier / coller / clic droit : bloqués si l'examen le demande.
   useEffect(() => {
-    if (!state.settings.blockCopyPaste || state.practice) return;
+    // Toujours bloqués pendant un examen ; l'incident n'est consigné que si le réglage est actif.
+    if (state.practice) return;
+    const reportable = state.settings.blockCopyPaste;
     const block = (type: SecurityEventType) => (e: Event) => {
       e.preventDefault();
-      report(type);
+      if (reportable) report(type);
     };
     const onCopy = block("COPY_ATTEMPT");
     const onPaste = block("PASTE_ATTEMPT");
@@ -1019,9 +1021,10 @@ export function ExamRunner({ initialState }: { initialState: AttemptClientState 
                     spellCheck
                     aria-label="Votre réponse"
                     placeholder="Rédigez votre réponse ici…"
-                    onPaste={(e) => {
-                      if (state.settings.blockCopyPaste && !state.practice) e.preventDefault();
-                    }}
+                    onPaste={(e) => e.preventDefault()}
+                    onCopy={(e) => e.preventDefault()}
+                    onCut={(e) => e.preventDefault()}
+                    onDrop={(e) => e.preventDefault()}
                     className="min-h-[260px] w-full resize-y rounded-[14px] border border-line bg-surface px-4 py-3 text-[16px] leading-relaxed text-ink outline-none read-only:bg-canvas focus:border-primary focus:ring-4 focus:ring-primary/15"
                   />
                   <span className="self-end text-xs text-muted tabular-nums">

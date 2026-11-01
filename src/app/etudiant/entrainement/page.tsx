@@ -22,8 +22,8 @@ export default async function StudentTrainingPage() {
         <div className="flex flex-col gap-1.5">
           <h1 className="text-[28px] leading-tight font-bold">Entraînement algorithmique</h1>
           <p className="text-[15px] text-muted">
-            Relevez les défis niveau par niveau : chaque exercice réussi rapporte des points et
-            débloque la suite.
+            Relevez les défis niveau par niveau : chaque exercice réussi rapporte des points ; le
+            niveau suivant s&apos;ouvre quand tous les exercices du niveau sont réussis.
           </p>
         </div>
         <div className="flex items-center gap-3 rounded-card bg-[linear-gradient(135deg,#315bef,#6d4bff)] px-4 py-3 text-white shadow-soft">

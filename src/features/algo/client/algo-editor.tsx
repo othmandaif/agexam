@@ -40,6 +40,8 @@ export const AlgoEditor = forwardRef<
     errorLine?: number | null;
     /** Obsolète : copier / coller est toujours bloqué. */
     blockPaste?: boolean;
+    /** Éditeur du formateur (corrigé, code de départ) : copier / coller autorisés. */
+    allowClipboard?: boolean;
     minRows?: number;
     ariaLabel?: string;
     onRun?: () => void;
@@ -55,6 +57,7 @@ export const AlgoEditor = forwardRef<
     value,
     onChange,
     readOnly,
+    allowClipboard,
     errorLine,
     minRows = 16,
     ariaLabel = "Algorithme",
@@ -285,11 +288,11 @@ export const AlgoEditor = forwardRef<
           onFocus={trackCaret}
           onBlur={() => setCurLine(null)}
           // Copier / couper / coller / glisser interdits (examen et entraînement).
-          onPaste={(e) => e.preventDefault()}
-          onDrop={(e) => e.preventDefault()}
-          onCopy={(e) => e.preventDefault()}
-          onCut={(e) => e.preventDefault()}
-          onContextMenu={(e) => e.preventDefault()}
+          onPaste={(e) => !allowClipboard && e.preventDefault()}
+          onDrop={(e) => !allowClipboard && e.preventDefault()}
+          onCopy={(e) => !allowClipboard && e.preventDefault()}
+          onCut={(e) => !allowClipboard && e.preventDefault()}
+          onContextMenu={(e) => !allowClipboard && e.preventDefault()}
           readOnly={readOnly}
           spellCheck={false}
           autoCapitalize="off"

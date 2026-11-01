@@ -207,11 +207,7 @@ export async function getStudentTrack(studentId: string, establishmentId: string
   }
   const solved = new Set(subs.filter((s) => s.passed).map((s) => s.exerciseId));
   const tried = new Set(subs.map((s) => s.exerciseId));
-  const solvedLevels = new Set(exercises.filter((e) => solved.has(e.id)).map((e) => e.level));
-  const open = unlockedLevels(
-    exercises.map((e) => e.level),
-    solvedLevels,
-  );
+  const open = unlockedLevels(exercises, solved);
   const levels = [...new Set(exercises.map((e) => e.level))].map((level) => ({
     level,
     unlocked: open.has(level),
@@ -306,5 +302,10 @@ export async function getStudentExercise(
     last: last ? { ...last, results: last.results as AlgoTestResult[] } : null,
     next: next ? { id: next.id, title: next.title, unlocked: next.unlocked } : null,
     levels: view.levels.map((l) => ({ level: l.level, unlocked: l.unlocked })),
+    /** Exercices du niveau encore non réussis, hors celui-ci. */
+    levelRemaining:
+      view.levels
+        .find((l) => l.level === ex.level)
+        ?.exercises.filter((e) => !e.solved && e.id !== ex.id).length ?? 0,
   };
 }

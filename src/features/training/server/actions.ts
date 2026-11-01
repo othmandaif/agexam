@@ -23,7 +23,6 @@ import {
 } from "@/server/db/schema";
 import { errors } from "@/server/http/errors";
 import { assertCurrentYear } from "@/server/year";
-import { exerciseHint, type Hint } from "./hint";
 import {
   exerciseIdSchema,
   exerciseSchema,
@@ -303,9 +302,9 @@ export async function submitExerciseAction(
       totalCount: results.length,
       results,
     });
-    // Premier succès du niveau → le niveau suivant s'ouvre.
+    // Dernier exercice du niveau réussi → le niveau suivant s'ouvre.
     const nextLevel = view.levels.find((l) => l.level > view.exercise.level);
-    const justUnlocked = passed && !!nextLevel && !nextLevel.unlocked;
+    const justUnlocked = passed && view.levelRemaining === 0 && !!nextLevel && !nextLevel.unlocked;
     const xpGained =
       passed && !view.solved ? xpForExercise(view.exercise.level, view.last === null) : 0;
     revalidatePath(ROUTES.student.training);
@@ -313,64 +312,6 @@ export async function submitExerciseAction(
       status: "success",
       data: { passed, passedCount, totalCount: results.length, results, justUnlocked, xpGained },
     };
-  } catch (error) {
-    return actionError(error);
-  }
-}
-
-/** Aide du coach : diagnostic + piste sur la dernière soumission échouée (jamais la solution). */
-export async function exerciseHintAction(
-  exerciseId: string,
-  code: string,
-): Promise<ActionState<Hint>> {
-  try {
-    const user = await requireTenant("ETUDIANT");
-    const id = exerciseIdSchema.parse({ exerciseId }).exerciseId;
-    // Contrôle d'accès + niveau ouvert.
-    await getStudentExercise(user.id, user.establishmentId, id);
-    const [ex] = await getDb()
-      .select({
-        title: algoExercises.title,
-        statement: algoExercises.statement,
-        solution: algoExercises.solutionCode,
-        tests: algoExercises.tests,
-      })
-      .from(algoExercises)
-      .where(eq(algoExercises.id, id))
-      .limit(1);
-    if (!ex) throw errors.notFound("Exercice introuvable.");
-    const src = code.slice(0, 20_000);
-    if (!src.trim()) throw errors.badRequest("Écrivez d'abord un algorithme.");
-    const failures = ex.tests
-      .map((t) => ({ t, r: runTest(src, t) }))
-      .filter(({ r }) => !r.passed)
-      .map(({ t, r }) => ({
-        inputs: t.inputs,
-        expected: t.expected,
-        got: r.got,
-        error: r.error
-          ? `${r.error.line ? `ligne ${r.error.line} : ` : ""}${r.error.message}`
-          : undefined,
-      }));
-    if (failures.length === 0) {
-      return {
-        status: "success",
-        data: {
-          diagnostic: "Ton algorithme passe tous les jeux d'essai !",
-          piste: "Soumets-le pour valider l'exercice.",
-          encouragement: "Bravo 🎉",
-        },
-      };
-    }
-    const hint = await exerciseHint({
-      title: ex.title,
-      statement: ex.statement,
-      solution: ex.solution,
-      code: src,
-      failures,
-    });
-    if (!hint) throw errors.badRequest("L'aide du coach n'est pas disponible pour le moment.");
-    return { status: "success", data: hint };
   } catch (error) {
     return actionError(error);
   }

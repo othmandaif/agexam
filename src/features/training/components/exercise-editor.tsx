@@ -153,6 +153,7 @@ export function ExerciseEditor({
               onChange={setStarter}
               readOnly={readOnly}
               minRows={6}
+              allowClipboard
               ariaLabel="Code de départ"
             />
           </div>
@@ -169,6 +170,7 @@ export function ExerciseEditor({
         </CardHeader>
         <CardContent>
           <AlgoPlayground
+            allowClipboard
             value={solution}
             onChange={setSolution}
             readOnly={readOnly}

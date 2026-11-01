@@ -75,12 +75,12 @@ export function DoorMap({ levels }: { levels: DoorLevel[] }) {
                 </span>
                 <span className="text-[13px] text-muted">
                   {!l.unlocked
-                    ? `Verrouillé : réussissez un exercice du niveau ${levels[i - 1]?.level}`
+                    ? `Verrouillé : terminez tous les exercices du niveau ${levels[i - 1]?.level}`
                     : complete
                       ? "Niveau terminé 👑"
                       : solved > 0
-                        ? "Niveau suivant débloqué · terminez celui-ci pour la couronne"
-                        : "Réussissez un exercice pour débloquer la suite"}
+                        ? "Terminez tous les exercices pour la couronne et débloquer la suite"
+                        : "Réussissez tous les exercices pour débloquer la suite"}
                 </span>
               </header>
 

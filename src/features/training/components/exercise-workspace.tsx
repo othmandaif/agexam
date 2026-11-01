@@ -8,8 +8,6 @@ import {
   PartyPopper,
   RotateCcw,
   Send,
-  Lightbulb,
-  LoaderCircle,
   Unlock,
 } from "lucide-react";
 import Link from "next/link";
@@ -22,8 +20,7 @@ import { IDLE, type ActionState } from "@/lib/action-state";
 import { paths } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import type { AlgoTestResult } from "@/server/db/schema/training";
-import { exerciseHintAction, submitExerciseAction, type SubmissionView } from "../server/actions";
-import type { Hint } from "../server/hint";
+import { submitExerciseAction, type SubmissionView } from "../server/actions";
 
 const draftKey = (id: string) => `agexam_algo_${id}`;
 
@@ -103,7 +100,6 @@ export function ExerciseWorkspace({
       />
 
       {state.status === "error" ? <FormMessage state={state} /> : null}
-      {shown && !shown.passed ? <CoachHint exerciseId={exerciseId} code={code} /> : null}
       {shown ? (
         <Results
           view={shown}
@@ -284,70 +280,5 @@ function OutputBox({ label, text, tone }: { label: string; text: string; tone?: 
         {text || "(aucune sortie)"}
       </pre>
     </div>
-  );
-}
-
-/** Aide du coach : diagnostic et piste, sans jamais donner la solution. */
-function CoachHint({ exerciseId, code }: { exerciseId: string; code: string }) {
-  const [hint, setHint] = useState<Hint | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, start] = useTransition();
-  const ask = () =>
-    start(async () => {
-      setError(null);
-      const r = await exerciseHintAction(exerciseId, code);
-      if (r.status === "success" && r.data) setHint(r.data);
-      else setError(r.status === "error" ? r.message : "Aide indisponible.");
-    });
-  return (
-    <section
-      aria-label="Aide du coach"
-      aria-live="polite"
-      className="flex flex-col gap-3 rounded-card border border-[#f5d27a] bg-[#fffaf0] p-4"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="flex items-center gap-2 text-[15px] font-bold text-ink">
-          <Lightbulb className="size-5 text-[#d99a00]" aria-hidden /> Bloqué ? Le coach t&apos;aide
-          sans te donner la solution.
-        </p>
-        <Button size="sm" variant="soft" onClick={ask} disabled={pending}>
-          {pending ? (
-            <>
-              <LoaderCircle className="animate-spin" aria-hidden /> Le coach réfléchit…
-            </>
-          ) : hint ? (
-            "Nouvel indice"
-          ) : (
-            "Demander un indice"
-          )}
-        </Button>
-      </div>
-      {pending && !hint ? (
-        <div className="flex flex-col gap-2" aria-hidden>
-          <div className="h-3.5 w-11/12 animate-pulse rounded bg-[#f3e2b8]" />
-          <div className="h-3.5 w-3/4 animate-pulse rounded bg-[#f3e2b8]" />
-        </div>
-      ) : null}
-      {error ? <p className="text-sm font-semibold text-danger">{error}</p> : null}
-      {hint ? (
-        <div className={cn("flex flex-col gap-1.5 text-[14.5px]", pending && "opacity-60")}>
-          {hint.encouragement ? (
-            <p className="font-semibold text-success">{hint.encouragement}</p>
-          ) : null}
-          {hint.diagnostic ? (
-            <p>
-              <strong>Ce qui se passe : </strong>
-              {hint.diagnostic}
-            </p>
-          ) : null}
-          {hint.piste ? (
-            <p>
-              <strong>Piste : </strong>
-              {hint.piste}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
   );
 }
