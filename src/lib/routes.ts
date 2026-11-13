@@ -12,6 +12,7 @@ export const ROUTES = {
   student: {
     home: "/etudiant",
     training: "/etudiant/entrainement",
+    homework: "/etudiant/devoirs",
   },
   trainer: {
     home: "/formateur",
@@ -23,6 +24,7 @@ export const ROUTES = {
     students: "/formateur/etudiants",
     studentsImport: "/formateur/etudiants/import",
     training: "/formateur/entrainement",
+    homework: "/formateur/devoirs",
   },
   admin: {
     home: "/admin",
@@ -62,6 +64,17 @@ export const paths = {
     `/formateur/entrainement/${trackId}/exercices/${exerciseId}` as Route,
   studentTrack: (trackId: string) => `/etudiant/entrainement/${trackId}` as Route,
   studentExercise: (exerciseId: string) => `/etudiant/entrainement/exercice/${exerciseId}` as Route,
+  homework: (homeworkId: string) => `/formateur/devoirs/${homeworkId}` as Route,
+  newHomeworkStep: (homeworkId: string) =>
+    `/formateur/devoirs/${homeworkId}/etapes/nouvelle` as Route,
+  importHomeworkSteps: (homeworkId: string) =>
+    `/formateur/devoirs/${homeworkId}/etapes/importer` as Route,
+  homeworkStep: (homeworkId: string, stepId: string) =>
+    `/formateur/devoirs/${homeworkId}/etapes/${stepId}` as Route,
+  homeworkHandin: (homeworkId: string, studentId: string) =>
+    `/formateur/devoirs/${homeworkId}/rendus/${studentId}` as Route,
+  studentHomework: (homeworkId: string) => `/etudiant/devoirs/${homeworkId}` as Route,
+  studentHomeworkStep: (stepId: string) => `/etudiant/devoirs/etape/${stepId}` as Route,
   bankQuestion: (questionId: string) => `/formateur/banque/${questionId}` as Route,
   /** Nouvel examen prérempli avec des questions de la banque. */
   newExamFromBank: (questionIds: string[]) =>

@@ -113,6 +113,20 @@
       "when": 1793148162125,
       "tag": "0015_proprietaire_groupes",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794577715925,
+      "tag": "0016_devoirs_distance",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794578953397,
+      "tag": "0017_indice_anime",
+      "breakpoints": true
     }
   ]
 }

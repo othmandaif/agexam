@@ -36,7 +36,14 @@ export interface AlgoGrading {
 
 const round = (x: number, step = 0.01) => Number((Math.round(x / step) * step).toFixed(2));
 
-export const ALGO_VERDICTS = ["correct", "presque", "partiel", "insuffisant", "hors_sujet", "vide"] as const;
+export const ALGO_VERDICTS = [
+  "correct",
+  "presque",
+  "partiel",
+  "insuffisant",
+  "hors_sujet",
+  "vide",
+] as const;
 export type AlgoVerdict = (typeof ALGO_VERDICTS)[number];
 
 /** Plafond quand au moins un jeu d'essai échoue : la note pleine exige un algorithme juste. */

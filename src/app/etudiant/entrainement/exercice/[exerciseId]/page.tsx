@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Statement } from "@/features/homework/components/statement";
 import { ExerciseWorkspace } from "@/features/training/components/exercise-workspace";
 import { getStudentExercise } from "@/features/training/server/queries";
 import { paths, ROUTES } from "@/lib/routes";
@@ -68,9 +69,7 @@ export default async function StudentExercisePage({
       </div>
 
       <Card className="flex flex-col gap-4 p-5">
-        <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
-          {exercise.statement}
-        </p>
+        <Statement text={exercise.statement} />
         {exercise.examples.length ? (
           <div className="flex flex-col gap-2">
             <h2 className="text-[13px] font-bold tracking-wide text-muted uppercase">Exemples</h2>

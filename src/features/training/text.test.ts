@@ -23,3 +23,13 @@ describe("import d'exercices", () => {
     expect(r.exercises[0]!.errors.join(" ")).toMatch(/Corrigé manquant/);
   });
 });
+
+describe("modèle des devoirs à distance", () => {
+  it("accepte « ETAPE: » et donne 4 étapes valides", async () => {
+    const { HOMEWORK_TEMPLATE } = await import("./text");
+    const p = parseExercisesText(HOMEWORK_TEMPLATE);
+    expect(p.globalErrors).toEqual([]);
+    expect(p.exercises).toHaveLength(4);
+    expect(p.exercises.every((e) => e.errors.length === 0)).toBe(true);
+  });
+});

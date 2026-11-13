@@ -37,7 +37,11 @@ function isEmailTaken(error: { code?: string; status?: number; message?: string 
 }
 
 /** Groupe de l'établissement ET de l'année courante (on n'inscrit pas dans le passé). */
-async function assertGroupInTenant(groupId: string, establishmentId: string, viewerId: string | null) {
+async function assertGroupInTenant(
+  groupId: string,
+  establishmentId: string,
+  viewerId: string | null,
+) {
   const [row] = await getDb()
     .select({ id: groups.id })
     .from(groups)

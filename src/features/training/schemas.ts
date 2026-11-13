@@ -37,6 +37,9 @@ export const exerciseSchema = z.object({
     .array(testInputSchema)
     .min(1, "Ajoutez au moins un jeu d'essai.")
     .max(MAX_TESTS, `${MAX_TESTS} jeux d'essai maximum.`),
+  /** Devoirs à distance : code animé de l'indice (vide : le corrigé) et ses saisies. */
+  hintCode: z.string().max(20000, "Indice trop long.").default(""),
+  hintInputs: z.array(z.string().max(500)).max(100).nullable().default(null),
 });
 export type ExerciseInput = z.infer<typeof exerciseSchema>;
 

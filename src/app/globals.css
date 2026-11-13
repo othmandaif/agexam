@@ -116,6 +116,33 @@
       transform: none;
     }
   }
+  /* Indice visuel : une case dont la valeur change « saute ». */
+  .animate-pop {
+    animation: pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  @keyframes pop {
+    0% {
+      transform: scale(0.85);
+      opacity: 0.4;
+    }
+    100% {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  .animate-slide-in {
+    animation: slide-in 320ms ease-out;
+  }
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }
 
 /* Mouvements réduits : animations et transitions quasi instantanées. */

@@ -29,15 +29,22 @@ export interface ParsedExercise {
   starterCode: string;
   solutionCode: string;
   tests: { inputs: string[]; hidden: boolean }[];
+  /** Devoirs : code animé de l'indice (vide : le corrigé). */
+  hintCode: string;
+  /** Devoirs : saisies de l'animation (null : premier jeu visible). */
+  hintInputs: string[] | null;
   errors: string[];
 }
 
-const RE_TITLE = /^\s*exercice\s*\d*\s*[:.)-]\s*(.*)$/i;
+/** « EXERCICE: titre » (entraînement) ou « ETAPE: titre » (devoirs à distance). */
+const RE_TITLE = /^\s*(?:exercice|[ée]tape)\s*\d*\s*[:.)-]\s*(.*)$/i;
 const RE_LEVEL = /^\s*niveau\s*[:=]\s*(.*)$/i;
 const RE_TEST = /^\s*(tests?|essai)(\s+cach[ée]s?)?\s*[:=]\s*(.*)$/i;
 const RE_FENCE = /^\s*```\s*([\p{L}\w-]*)\s*$/u;
 
 const SOLUTION_TAGS = new Set(["solution", "corrige", "corrigé"]);
+const HINT_TAGS = new Set(["indice", "anime", "animé", "animation"]);
+const RE_HINT_INPUTS = /^\s*indice\s+saisies?\s*[:=]\s*(.*)$/i;
 
 interface Draft {
   line: number;
@@ -46,6 +53,8 @@ interface Draft {
   statement: string[];
   starter: string | null;
   solution: string | null;
+  hint: string | null;
+  hintInputs: string[] | null;
   tests: { inputs: string[]; hidden: boolean }[];
   errors: string[];
 }
@@ -58,7 +67,7 @@ export function parseExercisesText(text: string): {
   const drafts: Draft[] = [];
   const globalErrors: string[] = [];
   let cur: Draft | null = null;
-  let fence: { kind: "starter" | "solution"; body: string[]; line: number } | null = null;
+  let fence: { kind: "starter" | "solution" | "hint"; body: string[]; line: number } | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!;
@@ -68,6 +77,7 @@ export function parseExercisesText(text: string): {
         const body = fence.body.join("\n").replace(/\s+$/, "");
         if (cur) {
           if (fence.kind === "solution") cur.solution = body;
+          else if (fence.kind === "hint") cur.hint = body;
           else cur.starter = body;
         }
         fence = null;
@@ -83,6 +93,8 @@ export function parseExercisesText(text: string): {
         statement: [],
         starter: null,
         solution: null,
+        hint: null,
+        hintInputs: null,
         tests: [],
         errors: [],
       };
@@ -90,13 +102,18 @@ export function parseExercisesText(text: string): {
       continue;
     }
     if (!cur) {
-      if (raw.trim()) globalErrors.push(`Ligne ${n} : commencez par « EXERCICE: titre ».`);
+      if (raw.trim())
+        globalErrors.push(`Ligne ${n} : commencez par « EXERCICE: titre » (ou « ETAPE: titre »).`);
       continue;
     }
     const f = RE_FENCE.exec(raw);
     if (f) {
       const tag = (f[1] ?? "").toLowerCase();
-      fence = { kind: SOLUTION_TAGS.has(tag) ? "solution" : "starter", body: [], line: n };
+      fence = {
+        kind: SOLUTION_TAGS.has(tag) ? "solution" : HINT_TAGS.has(tag) ? "hint" : "starter",
+        body: [],
+        line: n,
+      };
       continue;
     }
     const level = RE_LEVEL.exec(raw);
@@ -105,6 +122,12 @@ export function parseExercisesText(text: string): {
       if (!Number.isInteger(v) || v < 1 || v > 50)
         cur.errors.push(`Niveau invalide « ${level[1]} » (1 à 50).`);
       else cur.level = v;
+      continue;
+    }
+    const hintInputs = RE_HINT_INPUTS.exec(raw);
+    if (hintInputs) {
+      const value = (hintInputs[1] ?? "").trim();
+      cur.hintInputs = value ? value.split(";").map((v) => v.trim()) : [];
       continue;
     }
     const test = RE_TEST.exec(raw);
@@ -131,7 +154,7 @@ export function parseExercisesText(text: string): {
     const level = d.level ?? lastLevel;
     lastLevel = level;
     const statement = d.statement.join("\n").trim();
-    if (!d.title) errors.push("Titre manquant après « EXERCICE: ».");
+    if (!d.title) errors.push("Titre manquant après « EXERCICE: » / « ETAPE: ».");
     if (d.title.length > 120) errors.push("Titre trop long (120 caractères max.).");
     if (!statement) errors.push("Énoncé manquant (texte sous le titre).");
     if (!d.solution?.trim()) errors.push("Corrigé manquant : placez-le entre ```solution et ```.");
@@ -140,6 +163,13 @@ export function parseExercisesText(text: string): {
       if (!c.ok)
         errors.push(
           `Corrigé invalide${c.error.line ? ` (ligne ${c.error.line} du corrigé)` : ""} : ${c.error.message}`,
+        );
+    }
+    if (d.hint?.trim()) {
+      const c = compile(d.hint);
+      if (!c.ok)
+        errors.push(
+          `Code de l'indice invalide${c.error.line ? ` (ligne ${c.error.line} de l'indice)` : ""} : ${c.error.message}`,
         );
     }
     if (d.tests.length === 0) errors.push("Ajoutez au moins une ligne « TEST: … ».");
@@ -153,6 +183,8 @@ export function parseExercisesText(text: string): {
       starterCode: d.starter ?? "",
       solutionCode: d.solution ?? "",
       tests: d.tests,
+      hintCode: d.hint ?? "",
+      hintInputs: d.hintInputs,
       errors,
     };
   });
@@ -224,4 +256,84 @@ FIN
 TEST: 5
 TEST CACHE: 100
 TEST CACHE: 0
+`;
+
+/**
+ * Modèle d'un devoir à distance : un problème découpé en étapes, dans l'ordre.
+ * Chaque étape a son énoncé, son corrigé (sert à l'indice animé) et ses tests.
+ */
+export const HOMEWORK_TEMPLATE = `ETAPE: Analyser les entrées et les sorties
+Problème : calculer la moyenne de trois notes.
+Déclarez les variables nécessaires (trois notes et la moyenne) puis affichez :
+Entrées : 3 notes - Sortie : la moyenne
+\`\`\`solution
+VARIABLES
+  n1, n2, n3, moy : REEL
+DEBUT
+  ECRIRE("Entrées : 3 notes - Sortie : la moyenne")
+FIN
+\`\`\`
+TEST:
+
+ETAPE: Lire les données
+Lisez les trois notes puis affichez-les sur une ligne :
+Notes : <n1> <n2> <n3>
+\`\`\`solution
+VARIABLES
+  n1, n2, n3, moy : REEL
+DEBUT
+  LIRE(n1)
+  LIRE(n2)
+  LIRE(n3)
+  ECRIRE("Notes : ", n1, " ", n2, " ", n3)
+FIN
+\`\`\`
+TEST: 12 ; 15 ; 9
+TEST CACHE: 0 ; 20 ; 10
+
+ETAPE: Calculer
+Calculez la somme des trois notes et affichez :
+Somme = <somme>
+\`\`\`solution
+VARIABLES
+  n1, n2, n3, s : REEL
+DEBUT
+  LIRE(n1)
+  LIRE(n2)
+  LIRE(n3)
+  s <- n1 + n2 + n3
+  ECRIRE("Somme = ", s)
+FIN
+\`\`\`
+\`\`\`indice
+VARIABLES
+  a, b, s : REEL
+DEBUT
+  LIRE(a) // On lit la première valeur dans la case a
+  LIRE(b) // Puis la deuxième dans la case b
+  s <- a + b // On additionne et on range le total dans s
+  ECRIRE("Somme = ", s) // On affiche le résultat
+FIN
+\`\`\`
+INDICE SAISIES: 4 ; 6
+TEST: 12 ; 15 ; 9
+TEST CACHE: 10 ; 10 ; 10
+
+ETAPE: Algorithme complet
+Assemblez tout : lire les trois notes, calculer la moyenne et afficher :
+Moyenne = <moyenne>
+\`\`\`solution
+VARIABLES
+  n1, n2, n3, moy : REEL
+DEBUT
+  LIRE(n1)
+  LIRE(n2)
+  LIRE(n3)
+  moy <- (n1 + n2 + n3) / 3
+  ECRIRE("Moyenne = ", moy)
+FIN
+\`\`\`
+TEST: 12 ; 15 ; 9
+TEST CACHE: 10 ; 11 ; 12
+TEST CACHE: 0 ; 0 ; 1
 `;

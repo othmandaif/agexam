@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, EyeOff, FlaskConical, Plus, Save, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, FlaskConical, Lightbulb, Plus, Save, Trash2, X } from "lucide-react";
 import { useActionState, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,8 +9,10 @@ import { FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { freezeExpected, MAX_TESTS } from "@/domain/agsyntax/testing";
+import { traceAlgorithm, type TraceResult } from "@/domain/agsyntax/trace";
 import { AlgoEditor } from "@/features/algo/client/algo-editor";
 import { AlgoPlayground } from "@/features/algo/client/algo-playground";
+import { TracePlayer } from "@/features/homework/components/trace-player";
 import { IDLE } from "@/lib/action-state";
 import { cn } from "@/lib/utils";
 import { deleteExerciseAction, saveExerciseAction } from "../server/actions";
@@ -32,6 +34,8 @@ export interface ExerciseInitial {
   starterCode: string;
   solutionCode: string;
   tests: { inputs: string[]; hidden: boolean; expected?: string }[];
+  hintCode?: string;
+  hintInputs?: string[] | null;
 }
 
 const toInputs = (text: string) => {
@@ -40,16 +44,32 @@ const toInputs = (text: string) => {
   return lines;
 };
 
+type SaveAction = typeof saveExerciseAction;
+
 export function ExerciseEditor({
   trackId,
   initial,
   readOnly,
+  saveAction = saveExerciseAction,
+  levelLabel = "Niveau",
+  noun = "l'exercice",
+  withHint = false,
 }: {
   trackId: string;
   initial: ExerciseInitial;
   readOnly: boolean;
+  /** Devoirs à distance : même éditeur, autre enregistrement (étapes). */
+  saveAction?: SaveAction;
+  levelLabel?: string;
+  noun?: string;
+  /** Devoirs : réglage de l'indice animé (code, saisies, aperçu). */
+  withHint?: boolean;
 }) {
-  const [state, action, pending] = useActionState(saveExerciseAction, IDLE);
+  const [state, action, pending] = useActionState(saveAction, IDLE);
+  const [hintCode, setHintCode] = useState(initial.hintCode ?? "");
+  const [hintInputs, setHintInputs] = useState((initial.hintInputs ?? []).join("\n"));
+  const [hintCustomInputs, setHintCustomInputs] = useState(initial.hintInputs != null);
+  const [hintPreview, setHintPreview] = useState<(TraceResult & { code: string }) | null>(null);
   const [level, setLevel] = useState(String(initial.level));
   const [title, setTitle] = useState(initial.title);
   const [statement, setStatement] = useState(initial.statement);
@@ -89,7 +109,17 @@ export function ExerciseEditor({
     starterCode: starter,
     solutionCode: solution,
     tests: tests.map((t) => ({ inputs: toInputs(t.inputsText), hidden: t.hidden })),
+    hintCode,
+    hintInputs: hintCustomInputs ? toInputs(hintInputs) : null,
   });
+
+  /** Aperçu de l'indice tel que le stagiaire le verra. */
+  const previewHint = () => {
+    const code = hintCode.trim() ? hintCode : solution;
+    const first = tests.find((t) => !t.hidden) ?? tests[0];
+    const inputs = hintCustomInputs ? toInputs(hintInputs) : toInputs(first?.inputsText ?? "");
+    setHintPreview({ ...traceAlgorithm(code, inputs, 300), code });
+  };
 
   return (
     <form action={action} className="flex flex-col gap-6">
@@ -103,7 +133,7 @@ export function ExerciseEditor({
         <CardContent className="flex flex-col gap-4">
           <div className="grid gap-4 sm:grid-cols-[120px_1fr]">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="ex-level">Niveau</Label>
+              <Label htmlFor="ex-level">{levelLabel}</Label>
               <Input
                 id="ex-level"
                 type="number"
@@ -266,6 +296,75 @@ export function ExerciseEditor({
         </CardContent>
       </Card>
 
+      {withHint ? (
+        <Card>
+          <CardHeader className="flex-row flex-wrap items-end justify-between gap-3">
+            <div className="flex flex-col gap-1">
+              <CardTitle className="flex items-center gap-2">
+                <Lightbulb className="size-5 text-[#d99a00]" aria-hidden /> Indice animé
+              </CardTitle>
+              <CardDescription>
+                Code exécuté pas à pas quand le stagiaire bloque. Vide : le corrigé est animé.
+                Écrivez vos explications en commentaire en fin de ligne :{" "}
+                <code>s &lt;- s + i // on ajoute i au total</code>
+              </CardDescription>
+            </div>
+            <Button variant="soft" size="sm" onClick={previewHint}>
+              <Eye aria-hidden /> Prévisualiser l&apos;indice
+            </Button>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <AlgoEditor
+              value={hintCode}
+              onChange={setHintCode}
+              readOnly={readOnly}
+              minRows={8}
+              allowClipboard
+              ariaLabel="Code de l'indice animé"
+            />
+            <label className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+              <input
+                type="checkbox"
+                checked={hintCustomInputs}
+                onChange={(e) => setHintCustomInputs(e.target.checked)}
+                disabled={readOnly}
+                className="size-4 accent-[#315bef]"
+              />
+              Choisir les saisies de l&apos;animation (sinon : celles du premier jeu visible)
+            </label>
+            {hintCustomInputs ? (
+              <textarea
+                rows={3}
+                value={hintInputs}
+                onChange={(e) => setHintInputs(e.target.value)}
+                disabled={readOnly}
+                aria-label="Saisies de l'animation"
+                placeholder={"4\n6"}
+                className={cn(textareaClass, "font-mono text-[13.5px]")}
+              />
+            ) : null}
+            {hintPreview ? (
+              <div className="flex flex-col gap-3 rounded-[12px] border border-line bg-canvas/60 p-4">
+                {hintPreview.error ? (
+                  <p className="rounded-field bg-danger-bg px-3 py-2 text-[13px] font-semibold text-danger">
+                    {hintPreview.error.line ? `Ligne ${hintPreview.error.line} : ` : ""}
+                    {hintPreview.error.message}
+                  </p>
+                ) : null}
+                {hintPreview.frames.length ? (
+                  <TracePlayer
+                    key={hintPreview.code + hintPreview.frames.length}
+                    code={hintPreview.code}
+                    frames={hintPreview.frames}
+                    truncated={hintPreview.truncated}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       {readOnly ? null : (
         <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-end gap-3 rounded-[14px] border border-line bg-surface/95 p-3 shadow-pop backdrop-blur">
           <span className="mr-auto text-[13px] text-muted max-sm:hidden">
@@ -273,7 +372,7 @@ export function ExerciseEditor({
             figées.
           </span>
           <Button type="submit" variant="mint" disabled={pending}>
-            <Save aria-hidden /> {pending ? "Enregistrement…" : "Enregistrer l'exercice"}
+            <Save aria-hidden /> {pending ? "Enregistrement…" : `Enregistrer ${noun}`}
           </Button>
         </div>
       )}
@@ -281,9 +380,19 @@ export function ExerciseEditor({
   );
 }
 
-export function DeleteExerciseButton({ exerciseId, title }: { exerciseId: string; title: string }) {
+export function DeleteExerciseButton({
+  exerciseId,
+  title,
+  deleteAction = deleteExerciseAction,
+  noun = "cet exercice",
+}: {
+  exerciseId: string;
+  title: string;
+  deleteAction?: typeof deleteExerciseAction;
+  noun?: string;
+}) {
   const [open, setOpen] = useState(false);
-  const [state, action] = useActionState(deleteExerciseAction, IDLE);
+  const [state, action] = useActionState(deleteAction, IDLE);
   const [pending, start] = useTransition();
   return (
     <>
@@ -294,7 +403,7 @@ export function DeleteExerciseButton({ exerciseId, title }: { exerciseId: string
       <ConfirmDialog
         open={open}
         danger
-        title="Supprimer cet exercice ?"
+        title={`Supprimer ${noun} ?`}
         confirmLabel="Supprimer"
         pending={pending}
         onCancel={() => setOpen(false)}
@@ -306,7 +415,7 @@ export function DeleteExerciseButton({ exerciseId, title }: { exerciseId: string
           })
         }
       >
-        « {title} » et les soumissions des étudiants pour cet exercice seront supprimés.
+        « {title} » et les soumissions des étudiants pour {noun} seront supprimés.
       </ConfirmDialog>
     </>
   );

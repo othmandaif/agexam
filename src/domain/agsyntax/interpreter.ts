@@ -267,6 +267,8 @@ export class Machine {
   private readonly globals = new Map<string, Cell>();
   private readonly loopCache = new WeakMap<Stmt, LoopInfo>();
   private frame: Frame;
+  /** Appelé avant chaque instruction (animation pas à pas, indices). */
+  onStmt: ((s: Stmt) => void) | null = null;
 
   constructor(
     private readonly program: Program,
@@ -1095,7 +1097,24 @@ export class Machine {
     };
   }
 
+  /** Variables visibles dans le contexte courant, pour l'affichage en cases. */
+  snapshot(): { name: string; type: string; value: string; items?: string[] }[] {
+    const out: { name: string; type: string; value: string; items?: string[] }[] = [];
+    for (const cell of this.frame.locals.values()) {
+      if (cell.isConst) continue;
+      const v = cell.get();
+      out.push({
+        name: cell.name,
+        type: typeName(cell.type),
+        value: v === undefined ? "?" : v.t === "CHAINE" ? `"${v.v}"` : formatValue(v),
+        items: v?.t === "TABLEAU" ? v.v.data.map((x) => formatValue(x)) : undefined,
+      });
+    }
+    return out;
+  }
+
   private *exec(s: Stmt): Generator<MachineRequest, void, string | undefined> {
+    this.onStmt?.(s);
     yield* this.step(s.line);
     switch (s.kind) {
       case "assign": {

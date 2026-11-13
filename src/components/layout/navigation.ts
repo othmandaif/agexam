@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   BookOpen,
+  ClipboardCheck,
   Code2,
   Building2,
   Database,
@@ -28,6 +29,7 @@ const trainerNav: NavItem[] = [
   { label: "Examens", href: ROUTES.trainer.exams, icon: FileText },
   { label: "Banque de questions", href: ROUTES.trainer.bank, icon: Database },
   { label: "Entraînement algo", href: ROUTES.trainer.training, icon: Code2 },
+  { label: "Devoirs à distance", href: ROUTES.trainer.homework, icon: ClipboardCheck },
   { label: "Statistiques", href: ROUTES.trainer.stats, icon: BarChart3 },
   { label: "Étudiants", href: ROUTES.trainer.students, icon: GraduationCap },
   { label: "Groupes", href: ROUTES.trainer.groups, icon: Users },

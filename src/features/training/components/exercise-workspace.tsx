@@ -11,7 +11,8 @@ import {
   Unlock,
 } from "lucide-react";
 import Link from "next/link";
-import { useActionState, useEffect, useState, useTransition } from "react";
+import type { Route } from "next";
+import { useActionState, useEffect, useState, useTransition, type ReactNode } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FormMessage } from "@/components/ui/form";
@@ -30,19 +31,29 @@ export function ExerciseWorkspace({
   starterCode,
   lastResult,
   next,
+  submitAction = submitExerciseAction,
+  nextHref,
+  labels = WORDING,
+  extra,
 }: {
   exerciseId: string;
   initialCode: string;
   starterCode: string;
   lastResult: Omit<SubmissionView, "justUnlocked" | "xpGained"> | null;
   next: { id: string; title: string } | null;
+  /** Devoirs à distance : soumission d'une étape. */
+  submitAction?: typeof submitExerciseAction;
+  /** Lien vers la suite (par défaut : exercice suivant). */
+  nextHref?: Route;
+  labels?: Partial<typeof WORDING>;
+  /** Zone affichée sous les résultats (ex. indice animé). */
+  extra?: ReactNode;
 }) {
   const [code, setCode] = useState(initialCode);
   const [confirm, setConfirm] = useState(false);
-  const [state, action] = useActionState<ActionState<SubmissionView>, FormData>(
-    submitExerciseAction,
-    IDLE,
-  );
+  const [emptyError, setEmptyError] = useState(false);
+  const [state, action] = useActionState<ActionState<SubmissionView>, FormData>(submitAction, IDLE);
+  const words = { ...WORDING, ...labels };
   const [pending, start] = useTransition();
 
   // Brouillon local : un rechargement ne fait rien perdre.
@@ -84,7 +95,16 @@ export function ExerciseWorkspace({
         minRows={16}
         actions={
           <>
-            <Button variant="mint" onClick={() => setConfirm(true)} disabled={pending}>
+            <Button
+              variant="mint"
+              onClick={() => {
+                // Éditeur vide : message clair plutôt qu'une erreur de formulaire.
+                if (!code.trim()) return setEmptyError(true);
+                setEmptyError(false);
+                setConfirm(true);
+              }}
+              disabled={pending}
+            >
               <Send aria-hidden /> {pending ? "Vérification…" : "Soumettre"}
             </Button>
             <Button
@@ -99,7 +119,16 @@ export function ExerciseWorkspace({
         }
       />
 
-      {state.status === "error" ? <FormMessage state={state} /> : null}
+      {emptyError ? (
+        <p
+          role="alert"
+          className="rounded-xl bg-warning-bg px-4 py-3 text-sm font-semibold text-warning"
+        >
+          Écrivez votre algorithme dans l&apos;éditeur avant de soumettre.
+        </p>
+      ) : state.status === "error" ? (
+        <FormMessage state={state} />
+      ) : null}
       {shown ? (
         <Results
           view={shown}
@@ -107,8 +136,11 @@ export function ExerciseWorkspace({
           justUnlocked={result?.justUnlocked ?? false}
           xpGained={result?.xpGained ?? 0}
           next={next}
+          nextHref={nextHref}
+          words={words}
         />
       ) : null}
+      {extra}
 
       <ConfirmDialog
         open={confirm}
@@ -125,18 +157,28 @@ export function ExerciseWorkspace({
   );
 }
 
+const WORDING = {
+  solved: "Exercice réussi !",
+  unlocked: "Niveau suivant débloqué",
+  next: "Exercice suivant",
+};
+
 function Results({
   view,
   fresh,
   justUnlocked,
   xpGained,
   next,
+  nextHref,
+  words,
 }: {
   view: Omit<SubmissionView, "justUnlocked" | "xpGained">;
   fresh: boolean;
   justUnlocked: boolean;
   xpGained: number;
   next: { id: string; title: string } | null;
+  nextHref?: Route;
+  words: typeof WORDING;
 }) {
   const pct = view.totalCount ? Math.round((view.passedCount / view.totalCount) * 100) : 0;
   return (
@@ -164,7 +206,7 @@ function Results({
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <p className="text-[17px] font-bold text-ink">
-            {view.passed ? "Exercice réussi !" : "Pas encore…"}
+            {view.passed ? words.solved : "Pas encore…"}
           </p>
           <p className="text-[14px] text-muted">
             {view.passedCount} / {view.totalCount} jeux d&apos;essai réussis
@@ -177,16 +219,16 @@ function Results({
           ) : null}
           {justUnlocked ? (
             <p className="mt-1 flex items-center gap-1.5 text-[14px] font-semibold text-success">
-              <Unlock className="size-4" aria-hidden /> Niveau suivant débloqué
+              <Unlock className="size-4" aria-hidden /> {words.unlocked}
             </p>
           ) : null}
         </div>
         {view.passed && next ? (
           <Link
-            href={paths.studentExercise(next.id)}
+            href={nextHref ?? paths.studentExercise(next.id)}
             className={buttonVariants({ variant: "mint" })}
           >
-            Exercice suivant <ArrowRight aria-hidden />
+            {words.next} <ArrowRight aria-hidden />
           </Link>
         ) : null}
       </div>

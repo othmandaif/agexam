@@ -43,7 +43,10 @@ describe("gradeCode sans relecture", () => {
     points: 5,
   };
   it("ECRIRE(n) seul : pas la note pleine", async () => {
-    const g = await gradeCode({ ...input, code: "VARIABLES\nn : ENTIER\nDEBUT\nLIRE(n)\nECRIRE(n)\nFIN" });
+    const g = await gradeCode({
+      ...input,
+      code: "VARIABLES\nn : ENTIER\nDEBUT\nLIRE(n)\nECRIRE(n)\nFIN",
+    });
     expect(g.testsPassed).toBe(0);
     expect(g.ratio).toBeLessThan(0.8);
   });
